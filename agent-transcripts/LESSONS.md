@@ -82,4 +82,45 @@ Format: `[date] Symptom → Root cause → Fix`
 
 ---
 
-*(Append new lessons here as the build progresses)*
+---
+
+### 2026-08-01 — Claude Sonnet 4.6 hit token limit mid-execution (Phase 1 handoff)
+
+- **Symptom:** The coding agent (Claude Sonnet 4.6) was executing the Phase 1 implementation plan — fixing the race condition, adding streaming, session rename/delete, smart title generation, and conversation history. It completed all of those but hit its context window limit before finishing P3 (LLM-based agentic router).
+- **Root cause:** The combined token count of the full codebase (read into context), the implementation plan, and the generated code exceeded the model's context window mid-way through P3.
+- **Fix / Lesson:** Always break large implementation plans into phases with explicit handoff documents. The `phase0_handoff.md` and `phase1_plan.md` files were generated *before* execution so the next agent session could resume without re-reading all code from scratch. The new session picked up from `phase 1 implementation_plan` and continued.
+- **What was lost:** None — all work was committed before the limit hit. The handoff file contained a precise "left off at P3" marker.
+
+---
+
+### 2026-08-01 — First user message disappeared (optimistic UI race condition)
+
+- **Symptom:** When a user typed their first message in a new session, the message bubble briefly appeared then vanished.
+- **Root cause:** `App.jsx` was calling `setMessages([userMsg])` (optimistic update) *before* `createSession()` resolved. The session creation returned a new ID, which triggered a re-render that cleared the message list.
+- **Fix:** Moved session creation to happen *first* with `await createSession()`, stored the returned `session.id`, *then* called `setMessages()` to add the user bubble. Sequence: `createSession → setActiveSessionId → setMessages → streamChat`.
+
+---
+
+### 2026-08-01 — `<think>...</think>` blocks leaking into UI (qwen3:4b)
+
+- **Symptom:** qwen3:4b prefixes its reasoning with `<think>I need to consider...</think>` before giving the actual answer. This raw XML appeared in the chat UI.
+- **Root cause:** qwen3's "thinking mode" is enabled by default. The blocking `chat()` call returned the full raw string including think tags.
+- **Fix (blocking):** Added `strip_thinking_tags()` in `llm.py` using `re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)` applied after every `provider.chat()` call.
+- **Fix (streaming):** The stream handler needed state-machine logic — buffering tokens and detecting `<think>`/`</think>` open/close to suppress the thinking block mid-stream without buffering the entire response.
+
+---
+
+### 2026-08-01 — Keyword router couldn't handle complex multi-intent queries
+
+- **Symptom:** User query "Write a Ship30for30 essay about retention AND create an HTML visualization" — the keyword router returned `ship30for30` (first match wins), discarding the artifact request entirely.
+- **Root cause:** `router.py` used sequential `if/elif` keyword matching. It couldn't detect that a message had *two* intents.
+- **Fix:** Replaced with an LLM-based classifier (`classify_skill()` is now `async`). The LLM is given a prompt listing 5 skill types including `multi` (for compound requests). A keyword fallback preserves reliability if the LLM fails. Multi-skill chaining: the backend runs RAG → essays stream → artifact is generated after stream completes → returned in the SSE `done` event.
+
+---
+
+### 2026-08-01 — Streaming SSE buffering on Windows / Nginx-less setup
+
+- **Symptom:** Streaming responses from `/chat/stream` appeared to buffer and deliver all at once, not token-by-token.
+- **Root cause:** FastAPI's `StreamingResponse` works correctly, but some HTTP clients and proxies buffer SSE by default. Also, Ollama's streaming generator on Windows runs in a thread executor — the `asyncio.Queue` bridge between the sync thread and async generator had a subtle race.
+- **Fix:** Added `headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}` to `StreamingResponse`. Also ensured `loop.call_soon_threadsafe(queue.put_nowait, token)` is used (not `await queue.put()`) from the thread executor to avoid cross-thread asyncio violations.
+

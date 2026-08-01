@@ -11,7 +11,6 @@ import ChatMessage      from './components/ChatMessage';
 import ChatInput        from './components/ChatInput';
 import ArtifactPane     from './components/ArtifactPane';
 import ProviderToggle   from './components/ProviderToggle';
-import ThinkingDots     from './components/ThinkingDots';
 
 import {
   createSession, listSessions, getMessages,
@@ -25,6 +24,8 @@ const SUGGESTIONS = [
   { label: 'Q&A',      text: 'How do the best growth teams measure success?' },
   { label: 'Essay',    text: 'Write a Ship30for30 essay on product-market fit' },
   { label: 'Artifact', text: 'Create an HTML line chart showing growth frameworks' },
+  { label: 'Multi',    text: 'Write an essay on retention strategies AND create an HTML dashboard visualizing the key metrics' },
+  { label: 'Multi',    text: 'Write a Ship30for30 essay about pricing strategy and build an HTML visualization of pricing models' },
 ];
 
 function EmptyState({ onSuggestion }) {
@@ -37,7 +38,7 @@ function EmptyState({ onSuggestion }) {
       <p className="text-sm text-text-muted mb-8 text-center max-w-sm">
         Ask product &amp; growth questions, write essays, or build interactive artifacts.
       </p>
-      <div className="grid grid-cols-2 gap-2 w-full max-w-[520px]">
+      <div className="grid grid-cols-2 gap-2 w-full max-w-[560px]">
         {SUGGESTIONS.map((s, i) => (
           <button
             key={i}
@@ -46,7 +47,10 @@ function EmptyState({ onSuggestion }) {
                        hover:border-white/15 hover:bg-bg-elevated transition-all duration-150 group"
           >
             <span className={`text-[9px] font-semibold uppercase tracking-widest block mb-1 ${
-              s.label === 'Q&A' ? 'text-skill-qa' : s.label === 'Essay' ? 'text-skill-ship30' : 'text-skill-artifact'
+              s.label === 'Q&A'      ? 'text-skill-qa'
+            : s.label === 'Essay'   ? 'text-skill-ship30'
+            : s.label === 'Multi'   ? 'text-amber-400'
+            : 'text-skill-artifact'
             }`}>{s.label}</span>
             <p className="text-xs text-text-secondary group-hover:text-text-primary transition-colors leading-snug">{s.text}</p>
           </button>
@@ -90,6 +94,7 @@ export default function App() {
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [streaming, setStreaming]             = useState(false);
   const [artifact, setArtifact]               = useState(null);
+  const [agentStep, setAgentStep]             = useState('');
   const [provider, setProvider]               = useState('ollama');
   const [modelName, setModelName]             = useState('qwen3:4b');
   const [healthy, setHealthy]                 = useState(true);
@@ -208,7 +213,11 @@ export default function App() {
           m.id === assistantId ? { ...m, content: m.content + token } : m
         ));
       },
+      onStep: (step) => {
+        setAgentStep(step);
+      },
       onDone: async (meta) => {
+        setAgentStep('');
         // Finalize the streaming message with metadata
         setMessages(prev => prev.map(m =>
           m.id === assistantId
@@ -217,9 +226,14 @@ export default function App() {
         ));
         if (meta.artifact) setArtifact(meta.artifact);
 
-        // Refresh sessions to get updated smart title
-        const freshSessions = await listSessions();
-        setSessions(freshSessions);
+        // Update title — new_title is only set on the first message of a session
+        // Guard: only update if it's a non-empty string (LLM can return blank)
+        if (meta.new_title && typeof meta.new_title === 'string' && meta.new_title.trim()) {
+          setSessions(prev => prev.map(s =>
+            s.id === sessionId ? { ...s, title: meta.new_title.trim() } : s
+          ));
+        }
+        // Note: no listSessions() call — sessions don't change on follow-up messages
 
         setStreaming(false);
       },
@@ -298,12 +312,11 @@ export default function App() {
                 artifact={msg.artifact}
                 onOpenArtifact={setArtifact}
                 isStreaming={msg._streaming}
+                agentStep={msg._streaming ? agentStep : ''}
               />
             ))}
 
-            {/* ThinkingDots: show only while streaming but BEFORE first token arrives */}
-            {streaming && messages[messages.length - 1]?.content === '' && <ThinkingDots />}
-
+            {/* ThinkingDots handled inside ChatMessage when content is empty */}
             <div ref={bottomRef} className="h-6" />
           </div>
 

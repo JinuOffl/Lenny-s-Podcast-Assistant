@@ -33,8 +33,38 @@ function SessionRow({ session, isActive, onSelect, onDelete, onRename }) {
   const [menuOpen, setMenuOpen]       = useState(false);
   const [renaming, setRenaming]       = useState(false);
   const [renameValue, setRenameValue] = useState(session.title);
+  const [displayTitle, setDisplayTitle] = useState(session.title);
+  const prevTitleRef = useRef(session.title);
   const inputRef = useRef(null);
   const menuRef  = useRef(null);
+
+  // Typewriter effect: triggers when title changes from "New chat" → real title
+  useEffect(() => {
+    const prev = prevTitleRef.current;
+    const next = session.title;
+    prevTitleRef.current = next;
+    setRenameValue(next);
+
+    // Guard: if next is empty, show "New chat" as safe fallback
+    if (!next || !next.trim()) {
+      setDisplayTitle('New chat');
+      return;
+    }
+
+    if (prev === 'New chat' && next !== 'New chat') {
+      // Animate: reveal one character at a time
+      let i = 0;
+      setDisplayTitle('');
+      const id = setInterval(() => {
+        i += 1;
+        setDisplayTitle(next.slice(0, i));
+        if (i >= next.length) clearInterval(id);
+      }, 35);
+      return () => clearInterval(id);
+    } else {
+      setDisplayTitle(next);
+    }
+  }, [session.title]);
 
   // Close menu on outside click
   useEffect(() => {
@@ -85,7 +115,7 @@ function SessionRow({ session, isActive, onSelect, onDelete, onRename }) {
           <button onClick={handleRenameSubmit} className="p-1 text-skill-artifact hover:opacity-80">
             <Check className="w-3 h-3" />
           </button>
-          <button onClick={() => { setRenameValue(session.title); setRenaming(false); }}
+          <button onClick={() => { setRenameValue(displayTitle); setRenaming(false); }}
                   className="p-1 text-text-muted hover:text-text-secondary">
             <X className="w-3 h-3" />
           </button>
@@ -100,7 +130,7 @@ function SessionRow({ session, isActive, onSelect, onDelete, onRename }) {
           }`}
           title={session.title}
         >
-          <p className="text-xs font-medium truncate leading-snug">{session.title}</p>
+          <p className="text-xs font-medium truncate leading-snug">{displayTitle}</p>
           <p className="text-[10px] text-text-muted mt-0.5">{timeAgo(session.created_at)}</p>
         </button>
       )}

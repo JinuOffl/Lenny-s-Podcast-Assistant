@@ -1,0 +1,308 @@
+# Production-Ready Implementation Plan
+_Lenny's Growth Assistant — Internship Submission_
+_Due: 2nd August 2026 EOD_
+
+---
+
+## Part 1 — Gap Analysis: What's Done vs Missing
+
+### ✅ Already Working
+| Feature | Status |
+|---|---|
+| FastAPI backend + all endpoints | ✅ |
+| Supabase PostgreSQL + pgvector | ✅ |
+| RAG pipeline (180 eps, 4,604 chunks) | ✅ |
+| Q&A skill | ✅ |
+| Ship30for30 skill | ✅ (format needs fix) |
+| Artifact skill + pane | ✅ (HTML rendering broken) |
+| LLM toggle Ollama ↔ Anthropic | ✅ |
+| Session sidebar + new chat | ✅ |
+| Sources accordion | ✅ |
+
+### ❌ Critical Bugs (Break the demo)
+| Bug | Root Cause |
+|---|---|
+| First user message disappears | Optimistic UI pushed before session created — race condition in `App.jsx` |
+| HTML artifact doesn't render | `<iframe srcdoc>` not sanitized/sandboxed — shows blank or errors |
+| Title not generated smartly | Backend truncates first 60 chars; frontend state doesn't re-fetch sessions after chat |
+| Responses are unstructured | LLM has **zero conversation history** — each message is isolated, no memory |
+| Wrong skill badge sometimes | Router keyword gaps |
+
+### ❌ Missing Features (Task Requirements)
+| Missing | Requirement Reference |
+|---|---|
+| **Streaming text** | "ChatGPT-like workspace" — responses should stream token by token |
+| **Conversation context** | "Each session must maintain its own context" — LLM must receive chat history |
+| **Session rename** | "New Chat feature like ChatGPT" — must rename sessions |
+| **Session delete (permanent)** | "Delete it permanently" — DELETE endpoint + sidebar UI |
+| **3-dot menu on sessions** | Standard chat UI pattern |
+| **Auto-title via LLM** | Title should be smart (LLM-generated), not just first 60 chars |
+| **Multi-skill / complex queries** | "Complex query involving Q&A + Essay + Artifact?" — no chaining exists |
+| **Essay format (1250 words, bullets, bold)** | Requirement says "heavily formatted, ~1250 words, strong hook" |
+| **README.md** | Detailed setup, architecture overview, env vars — required |
+| **design.md** | UI/UX design document — required |
+| **architecture.md** | DB schema, API endpoints, agentic routing, LLM toggle |
+| **Video** | 2-3 min demo with camera — required for submission |
+
+### ❌ Architecture Issues
+| Issue | Impact |
+|---|---|
+| No conversation history passed to LLM | LLM can't answer follow-up questions ("what about the previous point?") |
+| No streaming endpoint | Blocking 20-30s wait feels completely broken |
+| Router is pure keyword-match | Can't handle ambiguous or multi-intent queries |
+
+---
+
+## Part 2 — "How is this Agentic AI?"
+
+**Current state**: Simple RAG → keyword router → single skill. **Not truly agentic.**
+
+**What makes it Agentic** (to implement):
+
+1. **LLM-based skill orchestration** — Router uses LLM reasoning, not `if "essay" in text`, to decide which skill(s) to invoke
+2. **Multi-step execution chains** — Complex query ("Write an essay about Chesky's advice and include an HTML chart") triggers Q&A → Essay → Artifact in sequence
+3. **Persistent memory** — Each skill receives the full session conversation history
+4. **Grounded citations** — Agent verifies claims against RAG sources before finalizing
+
+---
+
+## Part 3 — Priority-Ordered Fix Plan
+
+### P0 — Fix Demo-Breaking Bugs (1-2 hrs)
+
+#### 1. Conversation history (highest impact)
+**Files:** `backend/skills/qa.py`, `skills/ship30for30.py`, `skills/artifact.py`, `main.py`
+
+In `main.py`, fetch last 10 messages before calling skills:
+```python
+# Fetch conversation history
+cur = await conn.execute(
+    "SELECT role, content FROM messages WHERE session_id=%s ORDER BY created_at DESC LIMIT 10",
+    (session_id,)
+)
+history_rows = await cur.fetchall()
+history = [{"role": r["role"], "content": r["content"]} for r in reversed(history_rows)]
+# Pass to skill: run_qa(message, provider, conn, history=history)
+```
+
+Each skill adds history to the messages list before current user message.
+
+#### 2. First message race condition
+**File:** `frontend/src/App.jsx`
+
+Current broken flow:
+```
+setMessages([userMsg])  ← shown
+createSession()         ← async
+sendChat()              ← async, clears messages
+```
+
+Fixed flow:
+```
+createSession() → await
+setMessages([userMsg])
+sendChat() → append assistant msg
+```
+
+#### 3. HTML artifact rendering
+**File:** `frontend/src/components/ArtifactPane.jsx`
+
+Replace broken inject with proper sandboxed iframe:
+```jsx
+<iframe
+  srcDoc={artifact.content}
+  sandbox="allow-scripts allow-same-origin"
+  className="w-full h-full border-0"
+  title="Artifact preview"
+/>
+```
+
+#### 4. Session list refresh after chat
+**File:** `frontend/src/App.jsx`
+
+After `sendChat()` resolves, re-fetch sessions list:
+```js
+const data = await sendChat(sessionId, text);
+setSessions(await listSessions()); // refresh to get updated title
+```
+
+#### 5. Smart title generation
+**File:** `backend/main.py`
+
+Replace `LEFT(message, 60)` with LLM call:
+```python
+title_prompt = [{"role":"user","content":f"Generate a 4-6 word title for: {body.message}. Respond with ONLY the title."}]
+smart_title = await provider.chat(title_prompt)
+await conn.execute("UPDATE sessions SET title=%s WHERE id=%s AND title='New chat'", (smart_title[:80], session_id))
+```
+
+---
+
+### P1 — Streaming (2-3 hrs)
+
+**Backend** — Add SSE streaming endpoint:
+- `backend/llm.py` — add `async def stream(messages, system_prompt)` generator for Ollama (`/api/chat` with `stream: True`) and Anthropic (`stream=True`)
+- `backend/main.py` — add `POST /sessions/{id}/chat/stream` returning `StreamingResponse`
+- Stream format: `data: {"token": "...", "done": false}\n\n` and finally `data: {"done": true, "skill_used": "...", "sources": [...]}\n\n`
+
+**Frontend** — Wire SSE to UI:
+- `frontend/src/api.js` — add `streamChat(sessionId, message, onToken, onMeta)`
+- `frontend/src/App.jsx` — replace `sendChat()` with `streamChat()`, append tokens to last assistant message in real-time
+
+---
+
+### P2 — Session Management (1-2 hrs)
+
+**Backend** — Add missing endpoints:
+```python
+@app.patch("/sessions/{session_id}")
+async def rename_session(session_id, body): ...
+
+@app.delete("/sessions/{session_id}", status_code=204)
+async def delete_session(session_id): ...
+```
+
+**Frontend** — 3-dot menu in `SessionSidebar.jsx`:
+- Hover → show `⋯` button
+- Click → dropdown with **Rename** (inline input) and **Delete** (with confirm)
+
+---
+
+### P3 — Agentic Router Upgrade (1-2 hrs)
+
+**File:** `backend/router.py`
+
+Replace keyword matching with LLM classifier:
+```python
+ROUTER_PROMPT = """Classify this message into ONE of: qa, ship30for30, artifact, multi
+- qa: factual question about podcast/growth content
+- ship30for30: request to write essay/article/post
+- artifact: request to build HTML/chart/dashboard/visualization  
+- multi: needs both essay+artifact or q&a+artifact
+
+Message: {message}
+Last 2 messages context: {history_summary}
+
+Reply with ONLY the skill name."""
+```
+
+For `multi`: chain Q&A → pass result as context → Artifact or Essay
+
+---
+
+### P4 — Essay Format Fix (30 min)
+
+**File:** `backend/skills/ship30for30.py`
+
+Add rigid output template in prompt. Llama/Qwen follows templates better than descriptions:
+```
+OUTPUT TEMPLATE (follow exactly):
+
+## [Specific, Intriguing Headline]
+
+**[One-sentence hook that creates tension or curiosity]**
+
+[Story/example from transcript — 2-3 sentences, cite guest name]
+
+---
+
+## 1. [Section Title]
+**[Subpoint in bold]** [1-2 sentences]
+**[Subpoint in bold]** [1-2 sentences]
+
+## 2. [Section Title]
+...
+
+## 3. [Section Title]
+...
+
+---
+**The one thing to remember:** [Memorable, shareable insight]
+```
+
+Switch model to `qwen3:4b` — better instruction following than `llama3.2`.
+
+---
+
+### P5 — Documentation (2-3 hrs)
+
+#### [NEW] README.md (root)
+Structure:
+1. What it is (2 sentences)
+2. Architecture diagram (Mermaid)
+3. Prerequisites table
+4. Setup in 7 steps
+5. Environment variables table
+6. `ollama pull` commands
+7. How to run
+8. LLM toggle explanation
+9. Troubleshooting FAQ
+
+#### [NEW] docs/design.md
+- Nothing-inspired design rationale
+- Color palette + typography
+- 3-pane layout decisions
+- Component inventory
+- User flow (new chat → Q&A → artifact)
+
+#### [MODIFY] docs/architecture.md (or create if missing)
+- Database schema (sessions, messages tables)
+- All API endpoints (method, path, request, response)
+- Agentic routing flowchart
+- RAG pipeline flow
+- LLM toggle implementation
+
+---
+
+## Part 4 — Complete File Change Map
+
+| Priority | File | Type | Change |
+|---|---|---|---|
+| P0 | `backend/main.py` | MODIFY | Add history fetch, smart title, PATCH/DELETE endpoints |
+| P0 | `backend/skills/qa.py` | MODIFY | Accept + use `history` param |
+| P0 | `backend/skills/ship30for30.py` | MODIFY | Accept history, enforce template format |
+| P0 | `backend/skills/artifact.py` | MODIFY | Accept history |
+| P0 | `frontend/src/App.jsx` | MODIFY | Fix race condition, refresh sessions |
+| P0 | `frontend/src/components/ArtifactPane.jsx` | MODIFY | Fix iframe srcdoc rendering |
+| P1 | `backend/llm.py` | MODIFY | Add `stream()` async generator |
+| P1 | `backend/main.py` | MODIFY | Add `/chat/stream` SSE endpoint |
+| P1 | `frontend/src/api.js` | MODIFY | Add `streamChat()` SSE client |
+| P1 | `frontend/src/App.jsx` | MODIFY | Wire streaming to message state |
+| P2 | `backend/main.py` | MODIFY | PATCH + DELETE session endpoints |
+| P2 | `frontend/src/api.js` | MODIFY | `renameSession()`, `deleteSession()` |
+| P2 | `frontend/src/components/SessionSidebar.jsx` | MODIFY | 3-dot menu + inline rename |
+| P3 | `backend/router.py` | MODIFY | LLM-based intent classifier + multi-skill chain |
+| P4 | `backend/skills/ship30for30.py` | MODIFY | Rigid output template |
+| P5 | `README.md` | NEW/REWRITE | Full setup + architecture |
+| P5 | `docs/design.md` | NEW | UI/UX design document |
+| P5 | `docs/architecture.md` | NEW/UPDATE | Full system architecture |
+
+---
+
+## Part 5 — Qwen3 vs llama3.2
+
+> [!TIP]
+> **Switch to Qwen3:4b** for essay format compliance. It's significantly better at following structured output templates. Run: `ollama pull qwen3:4b` and update `.env`: `OLLAMA_CHAT_MODEL=qwen3:4b`
+
+---
+
+## Part 6 — Submission Checklist
+
+- [ ] P0: All 5 bugs fixed
+- [ ] P1: Streaming text working  
+- [ ] P2: Session rename + delete with 3-dot menu
+- [ ] P3: LLM-based agentic router
+- [ ] P4: Essay = 1250 words + proper Ship30 format
+- [ ] P5: README.md complete
+- [ ] P5: design.md complete
+- [ ] P5: architecture.md complete
+- [ ] GitHub repo public
+- [ ] agent-transcripts/ updated with failures + lessons
+- [ ] Video: 2-3 min, camera on, free-form (not reading)
+- [ ] Google Docs form submitted before 2 Aug EOD
+
+---
+
+> [!IMPORTANT]
+> **Time estimate**: P0 = 1.5h · P1 = 2.5h · P2 = 1.5h · P3 = 1.5h · P4 = 0.5h · P5 = 2.5h
+> **Total: ~10 hours.** With 1 day left, do P0 → P4 → P5 first; P1 and P3 are bonus.

@@ -1,65 +1,79 @@
 # Architecture: Lenny's Growth Assistant
 
-**Version:** 0.1
+**Version:** 0.3 — Agentic Router + Streaming + Multi-skill Chaining
 
 ---
 
 ## System Overview
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        User's Browser                           │
-│   React + Vite + Tailwind                                       │
-│   ┌──────────┐  ┌──────────────────┐  ┌───────────────────┐   │
-│   │ Sidebar  │  │    Chat Pane     │  │   Artifact Pane   │   │
-│   │ sessions │  │ messages + input │  │ iframe / markdown │   │
-│   └──────────┘  └──────────────────┘  └───────────────────┘   │
-└────────────────────────────┬────────────────────────────────────┘
-                             │ HTTP JSON (no streaming)
-┌────────────────────────────▼────────────────────────────────────┐
-│                    FastAPI Backend (port 8000)                   │
-│                                                                  │
-│   POST /sessions/{id}/chat                                       │
-│        │                                                         │
-│        ▼                                                         │
-│   router.classify_skill()   ← deterministic keyword match       │
-│        │                                                         │
-│        ├── "qa"          → skills/qa.py                         │
-│        ├── "ship30for30" → skills/ship30for30.py                │
-│        └── "artifact"    → skills/artifact.py                   │
-│              │                                                   │
-│              ▼                                                   │
-│         rag.retrieve()   ← pgvector cosine similarity           │
-│              │                                                   │
-│              ▼                                                   │
-│         llm.chat()       ← OllamaProvider | AnthropicProvider   │
-│              │                                                   │
-│              ▼                                                   │
-│        persist message → Supabase                                │
-│        return ChatResponse JSON                                  │
-└────────────┬─────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│                          User's Browser                             │
+│   React 18 + Vite + Tailwind                                        │
+│   ┌──────────┐  ┌──────────────────────┐  ┌───────────────────┐   │
+│   │ Sidebar  │  │      Chat Pane       │  │   Artifact Pane   │   │
+│   │ sessions │  │ streaming messages   │  │ iframe / markdown │   │
+│   │ 3-dot ⋯  │  │ ThinkingDots + SSE   │  │ Preview + Source  │   │
+│   └──────────┘  └──────────────────────┘  └───────────────────┘   │
+└────────────────────────────┬────────────────────────────────────────┘
+                             │ SSE stream (token-by-token)
+┌───────────────────────────▼─────────────────────────────────────────┐
+│                    FastAPI Backend (port 8000)                       │
+│                                                                      │
+│   POST /sessions/{id}/chat/stream   ← primary endpoint              │
+│        │                                                             │
+│        ├─ fetch history (last 10 msgs) from DB                       │
+│        │                                                             │
+│        ▼                                                             │
+│   router.classify_skill(msg, provider, history)                      │
+│        │    LLM call (max_tokens=12) → one of 5 intents             │
+│        │    keyword fallback if LLM fails                            │
+│        │                                                             │
+│        ├── "qa"          → RAG retrieve → qa.py → stream tokens     │
+│        ├── "ship30for30" → RAG retrieve → ship30.py → stream tokens │
+│        ├── "artifact"    → RAG retrieve → artifact.py → yield full  │
+│        ├── "followup"    → history only → qa.py → stream tokens     │
+│        └── "multi"       → RAG (top_k=8)                            │
+│                              → stream essay/QA                      │
+│                              → run_artifact() with essay as context  │
+│                              → return artifact in done event         │
+│                                                                      │
+│        ▼ (after stream completes)                                    │
+│   persist complete message → Supabase                                │
+│   generate smart title on msg #1 (LLM, max_tokens=30)               │
+│   emit: {done:true, skill_used, sources, artifact}                  │
+└────────────┬─────────────────────────────────────────────────────────┘
              │
     ┌────────┴──────────────────────────────────────┐
     │           Supabase Postgres (pgvector)         │
     │   sessions │ messages │ transcript_chunks      │
     └────────────┴──────────────────────────────────┘
              │
-    ┌────────┴──────────────┐
-    │       Ollama           │
-    │  llama3.3:8b (chat)   │
-    │  nomic-embed-text      │
-    └───────────────────────┘
+    ┌────────┴───────────────────────┐
+    │            Ollama              │
+    │  qwen3:4b (chat + routing)     │
+    │  nomic-embed-text (embeddings) │
+    └────────────────────────────────┘
 ```
 
 ---
 
 ## Key Design Decisions
 
-### 1. Rule-based Router (not an LLM classifier)
+### 1. LLM-based Agentic Router
 
-**Decision:** Classify user intent with keyword matching, not an LLM call.
+**Decision:** Classify user intent with a real LLM call, with keyword-match fallback.
 
-**Reasoning:** With 3 skills and clearly differentiated trigger phrases, a keyword classifier achieves >95% accuracy with zero latency and zero token cost. An LLM classifier adds ~1-2 seconds of latency and 200-500 tokens per request for no accuracy gain at this scale. If we ever need 10+ skills with nuanced overlap (e.g., "compare retention strategies across companies" might be QA or ship30), we'd switch to an embedding-based nearest-neighbour classifier against skill descriptions. That's P2.
+**Why:** Keyword matching cannot detect multi-intent queries (e.g., "write an essay AND create a chart") or understand conversational context (e.g., "convert this into an essay" referring to a prior QA answer). An LLM classifier reasons about the full message + last 2 turns of history.
+
+**Implementation:**
+- `classify_skill(message, provider, history)` is async
+- Makes one LLM call with `max_tokens=12` — returns one word
+- Valid outputs: `qa`, `ship30for30`, `artifact`, `multi`, `followup`
+- If LLM returns unexpected output or fails → falls back to keyword matching
+- `multi` triggers a 3-step chain: RAG retrieval → stream primary response (essay/QA) → generate artifact with essay as context
+
+**Trade-off:** Adds ~1-2s latency per message for the routing LLM call. Acceptable since the main skill LLM call takes 10-60s anyway. The `followup` fast-path (pure string matching, no LLM) keeps short messages instant.
 
 ### 2. Retrieval-sourced Citations
 

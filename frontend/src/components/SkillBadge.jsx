@@ -5,16 +5,24 @@
 
 const SKILL_CONFIG = {
   qa: {
-    label:  'Q&A',
-    color:  '#5B8DEF',
+    label: 'Q&A',
+    color: '#5B8DEF',
   },
   ship30for30: {
-    label:  'Essay',
-    color:  '#8B6EE8',
+    label: 'Essay',
+    color: '#8B6EE8',
   },
   artifact: {
-    label:  'Artifact',
-    color:  '#4CAF82',
+    label: 'Artifact',
+    color: '#4CAF82',
+  },
+  multi: {
+    label: '⚡ Multi',
+    color: '#F5A623',
+  },
+  followup: {
+    label: 'Follow-up',
+    color: '#9E9E9E',
   },
 };
 

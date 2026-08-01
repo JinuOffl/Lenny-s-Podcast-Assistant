@@ -19,7 +19,7 @@ from fastapi.responses import StreamingResponse
 from config import settings
 from db import init_pool, close_pool, get_conn
 from llm import get_llm_provider
-from router import classify_skill
+from router import classify_skill, SHIP30_KEYWORDS, ARTIFACT_KEYWORDS
 from models import (
     SessionCreate, SessionOut, SessionUpdate,
     MessageOut,
@@ -74,6 +74,7 @@ async def _get_history(conn, session_id: UUID, limit: int = 10) -> List[dict]:
 
 async def _generate_title(provider, first_message: str) -> str:
     """Ask LLM to generate a short session title (4-6 words)."""
+    fallback = first_message.strip()[:60] or "New conversation"
     try:
         title = await provider.chat(
             messages=[{
@@ -87,9 +88,73 @@ async def _generate_title(provider, first_message: str) -> str:
             system_prompt="You generate short, descriptive chat titles. Reply ONLY with the title text.",
             max_tokens=30,
         )
-        return title.strip().strip('"').strip("'")[:80]
+        cleaned = title.strip().strip('"').strip("'").strip()
+        return cleaned[:80] if cleaned else fallback
     except Exception:
-        return first_message[:60]
+        return fallback
+
+
+async def _run_multi(user_message: str, provider, conn, history=None) -> dict:
+    """
+    Multi-skill orchestrator — chains skills for complex queries.
+
+    Execution plan:
+      1. Retrieve rich RAG context (8 chunks)
+      2. Determine needed outputs from message intent
+      3. Generate primary response (essay if requested, else grounded Q&A)
+      4. If artifact also requested: generate it with full essay as context
+      5. Return combined result
+    """
+    from rag import retrieve, build_context, dedupe_sources
+
+    msg_lower = user_message.lower()
+    needs_essay    = any(k in msg_lower for k in SHIP30_KEYWORDS)
+    needs_artifact = any(k in msg_lower for k in ARTIFACT_KEYWORDS)
+
+    # Step 1: Rich RAG retrieval
+    chunks  = await retrieve(user_message, conn, top_k=8)
+    context = build_context(chunks)
+    sources = dedupe_sources(chunks)
+
+    # Step 2: Generate primary response
+    if needs_essay:
+        from skills.ship30for30 import SYSTEM_PROMPT as SP
+        user_content = (
+            f"TRANSCRIPT CONTEXT (ground your essay in this):\n{context}\n\n---\n\n"
+            f"ESSAY REQUEST: {user_message}\n\n"
+            f"Write the full Ship30for30 essay following the template above. ~1000-1250 words."
+        )
+        _max_tokens = 3500
+    else:
+        from skills.qa import SYSTEM_PROMPT as SP
+        user_content = (
+            f"TRANSCRIPT CONTEXT:\n{context}\n\n---\n\nQUESTION: {user_message}"
+        )
+        _max_tokens = 2048
+
+    messages = list(history or []) + [{"role": "user", "content": user_content}]
+    primary_response = await provider.chat(messages, system_prompt=SP, max_tokens=_max_tokens)
+
+    # Step 3: If artifact needed, chain it with the primary response as context
+    artifact = None
+    if needs_artifact:
+        enriched_history = list(history or []) + [
+            {"role": "user",      "content": user_message},
+            {"role": "assistant", "content": primary_response},
+        ]
+        art_result = await run_artifact(user_message, provider, conn, history=enriched_history)
+        artifact = art_result.get("artifact")
+        if art_result.get("sources"):
+            sources = art_result["sources"]
+
+    print(f"[multi] essay={needs_essay} artifact={needs_artifact} sources={len(sources)}")
+
+    return {
+        "response":   primary_response,
+        "skill_used": "multi",
+        "sources":    sources,
+        "artifact":   artifact,
+    }
 
 
 # ── Health ────────────────────────────────────────────────────────────────────
@@ -235,15 +300,19 @@ async def chat(session_id: UUID, body: ChatRequest):
             (session_id, body.message),
         )
 
-    # 4. Route to skill (pass history to all skills)
-    skill = classify_skill(body.message)
+    # 4. Route to skill via LLM-based agentic router
     provider = get_llm_provider(_current_provider)
+    skill = await classify_skill(body.message, provider, history=history)
 
     async with get_conn() as conn:
         if skill == "ship30for30":
             result = await run_ship30(body.message, provider, conn, history=history)
         elif skill == "artifact":
             result = await run_artifact(body.message, provider, conn, history=history)
+        elif skill == "followup":
+            result = await run_qa(body.message, provider, conn, history=history, rag_context=False)
+        elif skill == "multi":
+            result = await _run_multi(body.message, provider, conn, history=history)
         else:
             result = await run_qa(body.message, provider, conn, history=history)
 
@@ -315,8 +384,8 @@ async def chat_stream(session_id: UUID, body: ChatRequest):
             (session_id, body.message),
         )
 
-    skill = classify_skill(body.message)
     provider = get_llm_provider(_current_provider)
+    skill = await classify_skill(body.message, provider, history=history)
     is_first_message = len(history) == 0
 
     async def generate():
@@ -324,42 +393,110 @@ async def chat_stream(session_id: UUID, body: ChatRequest):
         sources = []
         artifact = None
         skill_used = skill
+        smart_title = None   # set on first message only, piped into done event
 
         try:
-            # For artifact skill: use blocking (needs full response for parsing)
+            # ── Artifact: blocking (full response needed for tag parsing) ──────
             if skill == "artifact":
+                yield f"data: {json.dumps({'step': 'Searching'})}\n\n"
                 async with get_conn() as conn:
                     result = await run_artifact(body.message, provider, conn, history=history)
                 response_text = result["response"]
                 sources = result["sources"]
                 artifact = result.get("artifact")
                 skill_used = result["skill_used"]
-                # Yield the full text as one chunk
                 yield f"data: {json.dumps({'token': response_text})}\n\n"
                 full_response = [response_text]
+
+            # ── Follow-up: skip RAG, history only ─────────────────────────────
+            elif skill == "followup":
+                yield f"data: {json.dumps({'step': 'Continuing'})}\n\n"
+                from skills.qa import SYSTEM_PROMPT as SP
+                messages = list(history)
+                messages.append({"role": "user", "content": body.message})
+                skill_used = "followup"
+                async for token in provider.stream(messages, system_prompt=SP, max_tokens=2048):
+                    full_response.append(token)
+                    yield f"data: {json.dumps({'token': token})}\n\n"
+
+            # ── Multi: Q&A → stream essay → artifact ──────────────────────────
+            elif skill == "multi":
+                skill_used = "multi"
+                from rag import retrieve, build_context, dedupe_sources
+                msg_lower = body.message.lower()
+                needs_essay    = any(k in msg_lower for k in SHIP30_KEYWORDS)
+                needs_artifact = any(k in msg_lower for k in ARTIFACT_KEYWORDS)
+
+                # Step 1: Retrieve rich context (more chunks for multi)
+                yield f"data: {json.dumps({'step': 'Searching'})}\n\n"
+                async with get_conn() as conn:
+                    chunks = await retrieve(body.message, conn, top_k=8)
+                    context = build_context(chunks)
+                    sources = dedupe_sources(chunks)
+
+                # Step 2: Stream primary response (essay if requested, else QA)
+                if needs_essay:
+                    yield f"data: {json.dumps({'step': 'Writing...'})}\n\n"
+                    from skills.ship30for30 import SYSTEM_PROMPT as SP
+                    primary_suffix = "\n\nWrite the full Ship30for30 essay following the template. ~1000-1250 words."
+                    _max_tokens = 3500
+                else:
+                    yield f"data: {json.dumps({'step': 'Generating...'})}\n\n"
+                    from skills.qa import SYSTEM_PROMPT as SP
+                    primary_suffix = ""
+                    _max_tokens = 2048
+
+                messages = list(history) + [{
+                    "role": "user",
+                    "content": (
+                        f"TRANSCRIPT CONTEXT:\n{context}\n\n---\n\n"
+                        f"{'ESSAY REQUEST' if needs_essay else 'QUESTION'}: {body.message}"
+                        + primary_suffix
+                    ),
+                }]
+
+                async for token in provider.stream(messages, system_prompt=SP, max_tokens=_max_tokens):
+                    full_response.append(token)
+                    yield f"data: {json.dumps({'token': token})}\n\n"
+
+                # Step 3: Generate artifact if requested (blocking, after essay done)
+                if needs_artifact:
+                    yield f"data: {json.dumps({'step': 'Building...'})}\n\n"
+                    complete_essay = "".join(full_response)
+                    enriched_history = list(history) + [
+                        {"role": "user",      "content": body.message},
+                        {"role": "assistant", "content": complete_essay},
+                    ]
+                    async with get_conn() as conn:
+                        art_result = await run_artifact(
+                            body.message, provider, conn, history=enriched_history
+                        )
+                    artifact = art_result.get("artifact")
+
+            # ── Q&A / Ship30: stream with RAG context ─────────────────────────
             else:
-                # Q&A and Ship30 can stream
+                yield f"data: {json.dumps({'step': 'Searching...'})}\n\n"
                 from rag import retrieve, build_context, dedupe_sources
                 async with get_conn() as conn:
                     chunks = await retrieve(body.message, conn, top_k=6 if skill == "ship30for30" else 5)
                     context = build_context(chunks)
-                    sources_list = dedupe_sources(chunks)
+                    sources = dedupe_sources(chunks)
 
-                sources = sources_list
                 if skill == "ship30for30":
+                    yield f"data: {json.dumps({'step': 'Writing..'})}\n\n"
                     from skills.ship30for30 import SYSTEM_PROMPT as SP
                 else:
+                    yield f"data: {json.dumps({'step': 'Generating...'})}\n\n"
                     from skills.qa import SYSTEM_PROMPT as SP
 
-                messages = list(history)
-                messages.append({
+                messages = list(history) + [{
                     "role": "user",
                     "content": (
                         f"TRANSCRIPT CONTEXT:\n{context}\n\n---\n\n"
                         f"{'ESSAY REQUEST' if skill == 'ship30for30' else 'QUESTION'}: {body.message}"
                         + ("\n\nWrite the full Ship30for30 essay following the template above. ~1000-1250 words." if skill == "ship30for30" else "")
                     ),
-                })
+                }]
 
                 async for token in provider.stream(messages, system_prompt=SP, max_tokens=3500 if skill == "ship30for30" else 2048):
                     full_response.append(token)
@@ -384,16 +521,23 @@ async def chat_stream(session_id: UUID, body: ChatRequest):
                     json.dumps(sources) if sources else None,
                 ),
             )
-            # Smart title on first message
-            if is_first_message and session.get("title") == "New chat":
-                smart_title = await _generate_title(provider, body.message)
-                await conn.execute(
+
+        # Title generation OUTSIDE conn block
+        # LLM call must not hold a DB connection open for 10+ seconds
+        if is_first_message:
+            smart_title = await _generate_title(provider, body.message)
+            # Guard: never save an empty title to DB
+            if not smart_title or not smart_title.strip():
+                smart_title = body.message.strip()[:60] or "New conversation"
+            async with get_conn() as conn2:
+                await conn2.execute(
                     "UPDATE sessions SET title = %s WHERE id = %s",
                     (smart_title, session_id),
                 )
+            print(f"[title] generated: {smart_title!r}")
 
-        # Final event
-        yield f"data: {json.dumps({'done': True, 'skill_used': skill_used, 'sources': sources, 'artifact': artifact})}\n\n"
+        # Final event — include new_title so frontend can update sidebar without a listSessions() call
+        yield f"data: {json.dumps({'done': True, 'skill_used': skill_used, 'sources': sources, 'artifact': artifact, 'new_title': smart_title})}\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

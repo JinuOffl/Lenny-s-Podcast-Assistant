@@ -40,7 +40,7 @@ export const sendChat = (sessionId, message) =>
  * Calls onToken(str) for each text token, onDone(meta) when complete.
  * Returns an AbortController so caller can cancel.
  */
-export function streamChat(sessionId, message, { onToken, onDone, onError }) {
+export function streamChat(sessionId, message, { onToken, onStep, onDone, onError }) {
   const controller = new AbortController();
 
   (async () => {
@@ -79,6 +79,7 @@ export function streamChat(sessionId, message, { onToken, onDone, onError }) {
             const event = JSON.parse(raw);
             if (event.error) { onError?.(new Error(event.error)); return; }
             if (event.done) { onDone?.(event); return; }
+            if (event.step != null) { onStep?.(event.step); continue; }
             if (event.token != null) onToken?.(event.token);
           } catch { /* ignore malformed lines */ }
         }

@@ -125,7 +125,7 @@ class OllamaProvider(LLMProvider):
         if system_prompt:
             payload["system"] = system_prompt
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         raw = await loop.run_in_executor(None, _ollama_chat_sync, self.base_url, payload)
         return strip_thinking_tags(raw)
 
@@ -144,7 +144,7 @@ class OllamaProvider(LLMProvider):
         if system_prompt:
             payload["system"] = system_prompt
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         queue: asyncio.Queue = asyncio.Queue()
 
         def _run():
@@ -192,7 +192,7 @@ class OllamaProvider(LLMProvider):
             yield token
 
     async def health_check(self) -> bool:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, _ollama_health_sync, self.base_url)
 
 
@@ -250,7 +250,7 @@ class AnthropicProvider(LLMProvider):
                 },
                 method="GET",
             )
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             def _check():
                 try:
                     with urllib.request.urlopen(req, timeout=5) as r:

@@ -21,10 +21,12 @@ A full-stack AI conversational web app that answers product/growth questions gro
 # Required: embedding model
 ollama pull nomic-embed-text
 
-# Required: chat model — use whichever you have. Examples:
-ollama pull llama3.2          # ~2GB, fast
-ollama pull llama3.3:8b       # ~5GB, better quality
-ollama pull qwen3:4b          # ~2.5GB, good alternative
+# Required: chat model (recommended)
+ollama pull qwen3:4b          # ~2.5GB, best instruction following for essays
+
+# Alternatives:
+ollama pull llama3.2          # ~2GB, faster but lower quality
+ollama pull llama3.3:8b       # ~5GB, higher quality
 ```
 
 ---
@@ -42,7 +44,7 @@ cp .env.example .env
 Edit `.env` and fill in:
 ```
 DATABASE_URL=postgresql://postgres:[password]@db.[ref].supabase.co:5432/postgres
-OLLAMA_CHAT_MODEL=llama3.2          # match what you pulled above
+OLLAMA_CHAT_MODEL=qwen3:4b          # recommended for best essay quality
 ANTHROPIC_API_KEY=                  # leave blank to use Ollama only
 ```
 
@@ -111,6 +113,7 @@ Open: **http://localhost:5173**
 | **Essay** | "Write a Ship30for30 essay on product-market fit" |
 | **Artifact** | "Create an HTML dashboard of top growth frameworks" |
 | **Artifact** | "Build me a landing page summarizing Lenny's lessons on PLG" |
+| **Multi-skill** | "Write an essay on retention AND create an HTML visualization of the key metrics" |
 
 - **LLM toggle** (header) — switch between Local (Ollama) and Cloud (Anthropic)
 - **Sources** — click "X sources cited" under any response to see episode citations with YouTube links
@@ -160,7 +163,7 @@ lenny-growth-assistant/
 │   ├── db.py             # psycopg3 async pool + schema DDL
 │   ├── rag.py            # nomic-embed-text + pgvector retrieval
 │   ├── llm.py            # OllamaProvider / AnthropicProvider
-│   ├── router.py         # classify_skill() — rule-based, deterministic
+│   ├── router.py         # classify_skill() — LLM-based agentic classifier (5 skills + fallback)
 │   ├── models.py         # Pydantic request/response schemas
 │   ├── requirements.txt
 │   └── skills/
@@ -193,8 +196,11 @@ lenny-growth-assistant/
 | GET | `/health` | DB + LLM connectivity check |
 | POST | `/sessions` | Create a new chat session |
 | GET | `/sessions` | List all sessions (most recent first) |
+| PATCH | `/sessions/{id}` | Rename a session |
+| DELETE | `/sessions/{id}` | Permanently delete a session + messages |
 | GET | `/sessions/{id}/messages` | Get full message history for a session |
 | POST | `/sessions/{id}/chat` | Send message → router → skill → LLM → persist → return |
+| POST | `/sessions/{id}/chat/stream` | Same as above but streams tokens via SSE |
 | GET | `/config/llm` | Get current LLM provider + model name |
 | POST | `/config/llm` | Switch provider (`{"llm_provider": "ollama"\|"anthropic"}`) |
 

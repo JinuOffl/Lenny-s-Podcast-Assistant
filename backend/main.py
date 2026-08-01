@@ -7,19 +7,21 @@ Run with:
 """
 from __future__ import annotations
 import json
+import asyncio
 from uuid import UUID
 from contextlib import asynccontextmanager
-from typing import List
+from typing import List, Optional
 
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 
 from config import settings
 from db import init_pool, close_pool, get_conn
 from llm import get_llm_provider
 from router import classify_skill
 from models import (
-    SessionCreate, SessionOut,
+    SessionCreate, SessionOut, SessionUpdate,
     MessageOut,
     ChatRequest, ChatResponse, ArtifactPayload, SourceItem,
     LLMConfigOut, LLMConfigSet,
@@ -28,7 +30,7 @@ from skills.qa import run_qa
 from skills.ship30for30 import run_ship30
 from skills.artifact import run_artifact
 
-# ── Lifespan (startup / shutdown) ────────────────────────────────────────────
+# ── Lifespan ──────────────────────────────────────────────────────────────────
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -36,12 +38,11 @@ async def lifespan(app: FastAPI):
     yield
     await close_pool()
 
-
-# ── App factory ───────────────────────────────────────────────────────────────
+# ── App ───────────────────────────────────────────────────────────────────────
 
 app = FastAPI(
     title="Lenny's Growth Assistant API",
-    version="0.1.0",
+    version="0.2.0",
     lifespan=lifespan,
 )
 
@@ -53,32 +54,59 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── In-memory provider state (per-process, reset on restart) ─────────────────
-# For a multi-worker setup, move this to the DB config table.
 _current_provider: str = settings.llm_provider
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+async def _get_history(conn, session_id: UUID, limit: int = 10) -> List[dict]:
+    """Fetch last N messages for a session (oldest first)."""
+    cur = await conn.execute(
+        """SELECT role, content FROM messages
+           WHERE session_id = %s
+           ORDER BY created_at DESC LIMIT %s""",
+        (session_id, limit),
+    )
+    rows = await cur.fetchall()
+    # rows come newest-first; reverse for chronological order
+    return [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
+
+
+async def _generate_title(provider, first_message: str) -> str:
+    """Ask LLM to generate a short session title (4-6 words)."""
+    try:
+        title = await provider.chat(
+            messages=[{
+                "role": "user",
+                "content": (
+                    f"Generate a concise 4-6 word title for a conversation that starts with:\n"
+                    f"\"{first_message[:200]}\"\n\n"
+                    f"Reply with ONLY the title. No quotes, no punctuation at the end."
+                ),
+            }],
+            system_prompt="You generate short, descriptive chat titles. Reply ONLY with the title text.",
+            max_tokens=30,
+        )
+        return title.strip().strip('"').strip("'")[:80]
+    except Exception:
+        return first_message[:60]
 
 
 # ── Health ────────────────────────────────────────────────────────────────────
 
 @app.get("/health", tags=["health"])
 async def health_check():
-    """
-    Checks DB connectivity + Ollama/Anthropic reachability.
-    Returns a status dict for each dependency.
-    """
     db_ok = False
     try:
         async with get_conn() as conn:
             await conn.execute("SELECT 1")
             db_ok = True
     except Exception as e:
-        # Pool exhausted, connection refused, or Supabase unreachable
         print(f"[health] DB check failed: {e}")
 
     provider = get_llm_provider(_current_provider)
     llm_ok = await provider.health_check()
 
-    # Ollama always check (even if Anthropic is selected)
     from llm import OllamaProvider
     ollama_ok = await OllamaProvider().health_check()
 
@@ -138,6 +166,32 @@ async def list_sessions():
     return [SessionOut(**r) for r in rows]
 
 
+@app.patch("/sessions/{session_id}", response_model=SessionOut, tags=["sessions"])
+async def rename_session(session_id: UUID, body: SessionUpdate):
+    """Rename a session."""
+    async with get_conn() as conn:
+        cur = await conn.execute(
+            "UPDATE sessions SET title = %s WHERE id = %s RETURNING *",
+            (body.title[:80], session_id),
+        )
+        row = await cur.fetchone()
+    if not row:
+        raise HTTPException(404, "Session not found")
+    return SessionOut(**row)
+
+
+@app.delete("/sessions/{session_id}", status_code=204, tags=["sessions"])
+async def delete_session(session_id: UUID):
+    """Permanently delete a session and all its messages."""
+    async with get_conn() as conn:
+        await conn.execute(
+            "DELETE FROM messages WHERE session_id = %s", (session_id,)
+        )
+        await conn.execute(
+            "DELETE FROM sessions WHERE id = %s", (session_id,)
+        )
+
+
 # ── Messages ──────────────────────────────────────────────────────────────────
 
 @app.get(
@@ -155,7 +209,7 @@ async def get_messages(session_id: UUID):
     return [MessageOut(**r) for r in rows]
 
 
-# ── Chat ──────────────────────────────────────────────────────────────────────
+# ── Chat (blocking) ───────────────────────────────────────────────────────────
 
 @app.post(
     "/sessions/{session_id}/chat",
@@ -172,27 +226,32 @@ async def chat(session_id: UUID, body: ChatRequest):
         if not session:
             raise HTTPException(404, "Session not found")
 
-        # 2. Persist user message
+        # 2. Fetch conversation history BEFORE persisting current message
+        history = await _get_history(conn, session_id, limit=10)
+
+        # 3. Persist user message
         await conn.execute(
             "INSERT INTO messages (session_id, role, content) VALUES (%s, 'user', %s)",
             (session_id, body.message),
         )
 
-    # 3. Route to skill
+    # 4. Route to skill (pass history to all skills)
     skill = classify_skill(body.message)
     provider = get_llm_provider(_current_provider)
 
     async with get_conn() as conn:
         if skill == "ship30for30":
-            result = await run_ship30(body.message, provider, conn)
+            result = await run_ship30(body.message, provider, conn, history=history)
         elif skill == "artifact":
-            result = await run_artifact(body.message, provider, conn)
+            result = await run_artifact(body.message, provider, conn, history=history)
         else:
-            result = await run_qa(body.message, provider, conn)
+            result = await run_qa(body.message, provider, conn, history=history)
 
-    # 4. Persist assistant message
+    # 5. Persist assistant message
     artifact_json = result.get("artifact")
     sources = result.get("sources", [])
+
+    is_first_message = len(history) == 0
 
     async with get_conn() as conn:
         await conn.execute(
@@ -210,17 +269,15 @@ async def chat(session_id: UUID, body: ChatRequest):
             ),
         )
 
-        # Update session title from first user message if still default
-        await conn.execute(
-            """
-            UPDATE sessions
-            SET title = LEFT(%s, 60)
-            WHERE id = %s AND title = 'New chat'
-            """,
-            (body.message, session_id),
-        )
+        # 6. Generate smart title on first message
+        if is_first_message and session.get("title") == "New chat":
+            smart_title = await _generate_title(provider, body.message)
+            await conn.execute(
+                "UPDATE sessions SET title = %s WHERE id = %s",
+                (smart_title, session_id),
+            )
 
-    # 5. Build response
+    # 7. Build response
     artifact_payload = None
     if artifact_json:
         artifact_payload = ArtifactPayload(**artifact_json)
@@ -231,3 +288,112 @@ async def chat(session_id: UUID, body: ChatRequest):
         sources=[SourceItem(**s) for s in sources],
         artifact=artifact_payload,
     )
+
+
+# ── Chat (streaming SSE) ──────────────────────────────────────────────────────
+
+@app.post("/sessions/{session_id}/chat/stream", tags=["chat"])
+async def chat_stream(session_id: UUID, body: ChatRequest):
+    """
+    Server-Sent Events endpoint for streaming chat responses.
+    Events: data: {"token": "..."}\n\n
+    Final:  data: {"done": true, "skill_used": "...", "sources": [...], "artifact": ...}\n\n
+    """
+    # 1. Verify session
+    async with get_conn() as conn:
+        cur = await conn.execute(
+            "SELECT * FROM sessions WHERE id = %s", (session_id,)
+        )
+        session = await cur.fetchone()
+        if not session:
+            raise HTTPException(404, "Session not found")
+
+        history = await _get_history(conn, session_id, limit=10)
+
+        await conn.execute(
+            "INSERT INTO messages (session_id, role, content) VALUES (%s, 'user', %s)",
+            (session_id, body.message),
+        )
+
+    skill = classify_skill(body.message)
+    provider = get_llm_provider(_current_provider)
+    is_first_message = len(history) == 0
+
+    async def generate():
+        full_response = []
+        sources = []
+        artifact = None
+        skill_used = skill
+
+        try:
+            # For artifact skill: use blocking (needs full response for parsing)
+            if skill == "artifact":
+                async with get_conn() as conn:
+                    result = await run_artifact(body.message, provider, conn, history=history)
+                response_text = result["response"]
+                sources = result["sources"]
+                artifact = result.get("artifact")
+                skill_used = result["skill_used"]
+                # Yield the full text as one chunk
+                yield f"data: {json.dumps({'token': response_text})}\n\n"
+                full_response = [response_text]
+            else:
+                # Q&A and Ship30 can stream
+                from rag import retrieve, build_context, dedupe_sources
+                async with get_conn() as conn:
+                    chunks = await retrieve(body.message, conn, top_k=6 if skill == "ship30for30" else 5)
+                    context = build_context(chunks)
+                    sources_list = dedupe_sources(chunks)
+
+                sources = sources_list
+                if skill == "ship30for30":
+                    from skills.ship30for30 import SYSTEM_PROMPT as SP
+                else:
+                    from skills.qa import SYSTEM_PROMPT as SP
+
+                messages = list(history)
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        f"TRANSCRIPT CONTEXT:\n{context}\n\n---\n\n"
+                        f"{'ESSAY REQUEST' if skill == 'ship30for30' else 'QUESTION'}: {body.message}"
+                        + ("\n\nWrite the full Ship30for30 essay following the template above. ~1000-1250 words." if skill == "ship30for30" else "")
+                    ),
+                })
+
+                async for token in provider.stream(messages, system_prompt=SP, max_tokens=3500 if skill == "ship30for30" else 2048):
+                    full_response.append(token)
+                    yield f"data: {json.dumps({'token': token})}\n\n"
+
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            return
+
+        # Persist assistant message
+        complete_text = "".join(full_response)
+        async with get_conn() as conn:
+            await conn.execute(
+                """INSERT INTO messages
+                   (session_id, role, content, skill_used, artifact_json, sources)
+                   VALUES (%s, 'assistant', %s, %s, %s, %s)""",
+                (
+                    session_id,
+                    complete_text,
+                    skill_used,
+                    json.dumps(artifact) if artifact else None,
+                    json.dumps(sources) if sources else None,
+                ),
+            )
+            # Smart title on first message
+            if is_first_message and session.get("title") == "New chat":
+                smart_title = await _generate_title(provider, body.message)
+                await conn.execute(
+                    "UPDATE sessions SET title = %s WHERE id = %s",
+                    (smart_title, session_id),
+                )
+
+        # Final event
+        yield f"data: {json.dumps({'done': True, 'skill_used': skill_used, 'sources': sources, 'artifact': artifact})}\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

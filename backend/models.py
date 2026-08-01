@@ -25,6 +25,10 @@ class SessionOut(BaseModel):
         from_attributes = True
 
 
+class SessionUpdate(BaseModel):
+    title: str
+
+
 # ── Message ──────────────────────────────────────────────────────────────────
 
 class MessageOut(BaseModel):

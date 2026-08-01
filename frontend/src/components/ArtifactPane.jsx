@@ -101,7 +101,7 @@ export default function ArtifactPane({ artifact, onClose }) {
             <iframe
               id="artifact-iframe"
               title="Artifact preview"
-              sandbox="allow-scripts"
+              sandbox="allow-scripts allow-same-origin"
               srcDoc={artifact.content}
               className="w-full h-full border-0 bg-white"
             />

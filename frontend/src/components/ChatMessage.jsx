@@ -34,7 +34,7 @@ function CopyButton({ text }) {
   );
 }
 
-export default function ChatMessage({ role, content, skillUsed, sources, artifact, onOpenArtifact }) {
+export default function ChatMessage({ role, content, skillUsed, sources, artifact, onOpenArtifact, isStreaming }) {
   const [hovered, setHovered] = useState(false);
   const isUser = role === 'user';
 
@@ -65,6 +65,9 @@ export default function ChatMessage({ role, content, skillUsed, sources, artifac
         {/* Text */}
         <div className="flex-1 min-w-0 prose-chat">
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+          {isStreaming && (
+            <span className="inline-block w-0.5 h-4 bg-text-muted ml-0.5 animate-pulse" aria-hidden />
+          )}
         </div>
       </div>
 

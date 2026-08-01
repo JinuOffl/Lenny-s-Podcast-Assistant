@@ -1,25 +1,21 @@
 /**
- * ThinkingDots.jsx — Animated "AI is thinking" indicator.
+ * ThinkingDots.jsx — Gray pulsing dots with "Thinking" label.
+ * Keeps the same animation timing the user likes, recolored to monochromatic gray.
  */
 export default function ThinkingDots() {
   return (
-    <div className="flex items-center gap-3 px-5 py-3 animate-fade-in">
-      {/* Assistant avatar */}
-      <div className="w-7 h-7 rounded-full bg-gradient-to-br from-accent-primary to-amber-500
-                      flex items-center justify-center flex-shrink-0 shadow-sm shadow-accent-primary/20">
-        <span className="text-[11px] font-bold text-white">L</span>
-      </div>
+    <div className="flex items-start gap-3 px-4 py-3 max-w-[760px] mx-auto w-full animate-fade-in">
+      {/* ● dot matching AI messages */}
+      <div className="w-2 h-2 rounded-full bg-white/30 flex-shrink-0 mt-1.5" />
 
-      <div className="flex items-center gap-1.5 bg-bg-surface border border-border/60
-                      rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm">
-        <span className="text-[11px] text-text-muted font-medium mr-2 tracking-wide">Thinking</span>
-        {[0, 1, 2].map((i) => (
-          <span
-            key={i}
-            className="thinking-dot w-1.5 h-1.5 bg-accent-primary block"
-            style={{ animationDelay: `${i * 0.16}s` }}
-          />
-        ))}
+      {/* Thinking label + dots */}
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-text-muted font-medium">Thinking</span>
+        <div className="flex items-center gap-1">
+          <span className="thinking-dot" />
+          <span className="thinking-dot" />
+          <span className="thinking-dot" />
+        </div>
       </div>
     </div>
   );

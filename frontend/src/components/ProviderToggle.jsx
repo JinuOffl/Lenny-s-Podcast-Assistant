@@ -1,5 +1,6 @@
 /**
- * ProviderToggle.jsx — Segmented control to switch LLM provider.
+ * ProviderToggle.jsx — Minimal pill toggle for Local / Cloud.
+ * White border when active, no orange.
  */
 import { Cpu, Cloud } from 'lucide-react';
 
@@ -10,17 +11,20 @@ export default function ProviderToggle({ provider, onChange, modelName }) {
   ];
 
   return (
-    <div className="flex flex-col items-end gap-1">
-      <div className="flex items-center bg-bg-elevated border border-border/80 rounded-xl p-0.5 gap-0.5">
+    <div className="flex items-center gap-2">
+      {modelName && (
+        <span className="text-[10px] text-text-muted font-mono hidden sm:block">{modelName}</span>
+      )}
+      <div className="flex items-center bg-bg-elevated border border-border rounded-lg p-0.5">
         {options.map(({ value, label, Icon }) => (
           <button
             key={value}
             id={`provider-toggle-${value}`}
             onClick={() => onChange(value)}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold
-                        transition-all duration-200 ${
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium
+                        transition-all duration-150 ${
               provider === value
-                ? 'bg-accent-primary text-white shadow-sm shadow-accent-primary/30'
+                ? 'bg-white text-black shadow-sm'
                 : 'text-text-muted hover:text-text-secondary'
             }`}
           >
@@ -29,9 +33,6 @@ export default function ProviderToggle({ provider, onChange, modelName }) {
           </button>
         ))}
       </div>
-      {modelName && (
-        <span className="text-[9px] text-text-muted font-mono opacity-70">{modelName}</span>
-      )}
     </div>
   );
 }

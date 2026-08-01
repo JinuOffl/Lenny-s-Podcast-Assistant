@@ -1,0 +1,38 @@
+# Lenny's Podcast transcripts (cloned by ingest.py)
+transcripts_repo/
+lenny-podcast-transcripts/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+env/
+venv/
+*.egg-info/
+dist/
+build/
+
+# Environment — NEVER commit secrets
+.env
+backend/.env
+
+# Node / Frontend
+node_modules/
+frontend/dist/
+frontend/.vite/
+*.local
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Scratch files
+restore.js
+check_db.py
+phase0_handoff.md

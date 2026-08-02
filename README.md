@@ -4,6 +4,8 @@ A full-stack AI conversational web app that answers product/growth questions gro
 
 **Stack:** FastAPI · Supabase Postgres + pgvector · Ollama · React + Vite + Tailwind
 
+**Built with Compound Engineering** — AI coding assistant (Antigravity/Gemini) used throughout development following a structured PRD → architecture → phased execution workflow. See [`agent-transcripts/`](./agent-transcripts/) for real failures, debugging sessions, and corrections from the build process.
+
 ---
 
 ## Prerequisites

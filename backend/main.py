@@ -307,7 +307,7 @@ async def chat(session_id: UUID, body: ChatRequest):
         )
 
     # 4. Route to skill via LLM-based agentic router
-    provider = get_llm_provider(_current_provider)
+    provider = get_llm_provider(session["llm_provider"])
     skill = await classify_skill(body.message, provider, history=history)
 
     async with get_conn() as conn:
@@ -390,7 +390,7 @@ async def chat_stream(session_id: UUID, body: ChatRequest):
             (session_id, body.message),
         )
 
-    provider = get_llm_provider(_current_provider)
+    provider = get_llm_provider(session["llm_provider"])
     skill = await classify_skill(body.message, provider, history=history)
     is_first_message = len(history) == 0
 
@@ -588,7 +588,7 @@ async def chat_research_stream(session_id: UUID, body: ChatRequest):
             (session_id, body.message),
         )
 
-    provider = get_llm_provider(_current_provider)
+    provider = get_llm_provider(session["llm_provider"])
     is_first_message = len(history) == 0
 
     async def generate():

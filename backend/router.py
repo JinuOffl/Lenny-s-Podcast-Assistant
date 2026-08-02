@@ -105,6 +105,19 @@ def _keyword_classify(msg: str) -> str:
 
 def _is_followup(msg_lower: str) -> bool:
     """Synchronous follow-up check — no LLM needed."""
+    # Short generic conversational remarks — never need RAG
+    CHITCHAT = {
+        "ok", "okay", "sure", "thanks", "thank you", "got it", "nice",
+        "cool", "great", "yes", "no", "yep", "nope", "alright", "right",
+        "hmm", "hm", "ah", "wow", "lol", "haha", "interesting",
+        "tell me more", "go on", "continue", "more", "why",
+    }
+    if msg_lower.strip() in CHITCHAT:
+        return True
+    # Also catch multi-word combos of chitchat words ("ok interesting", "sure thanks", etc.)
+    words = msg_lower.strip().split()
+    if 1 <= len(words) <= 4 and all(w in CHITCHAT for w in words):
+        return True
     if any(sig in msg_lower for sig in FOLLOWUP_SIGNALS):
         return True
     word_count = len(msg_lower.split())

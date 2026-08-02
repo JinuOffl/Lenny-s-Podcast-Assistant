@@ -103,7 +103,7 @@ export default function ArtifactPane({ artifact, onClose }) {
               title="Artifact preview"
               srcDoc={artifact.content}
               className="w-full h-full border-0 bg-white"
-              sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
+              sandbox="allow-scripts allow-forms allow-popups allow-modals"
               referrerPolicy="no-referrer"
             />
           ) : (

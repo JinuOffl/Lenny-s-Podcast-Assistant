@@ -105,6 +105,9 @@ export default function App() {
 
   const bottomRef    = useRef(null);
   const abortRef     = useRef(null); // stores current SSE AbortController
+  const skipNextFetchRef = useRef(false); // skip message fetch after inline session creation
+  const creatingSessionRef = useRef(false); // prevent duplicate new-chat on fast clicks
+  const sendingRef = useRef(false);          // prevent duplicate sends on session switch
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -134,6 +137,7 @@ export default function App() {
   // ── Load messages ──
   useEffect(() => {
     if (!activeSessionId) { setMessages([]); return; }
+    if (skipNextFetchRef.current) { skipNextFetchRef.current = false; return; }
     setMessagesLoading(true);
     getMessages(activeSessionId)
       .then(setMessages)
@@ -143,6 +147,8 @@ export default function App() {
 
   // ── New chat ──
   const handleNewChat = useCallback(async () => {
+    if (creatingSessionRef.current) return;
+    creatingSessionRef.current = true;
     try {
       const session = await createSession('New chat', provider);
       setSessions(prev => [session, ...prev]);
@@ -151,6 +157,8 @@ export default function App() {
       setArtifact(null);
     } catch {
       setError('Failed to create session.');
+    } finally {
+      creatingSessionRef.current = false;
     }
   }, [provider]);
 
@@ -173,6 +181,8 @@ export default function App() {
 
   // ── Send message (streaming) ──
   const handleSend = useCallback(async (text) => {
+    if (sendingRef.current) return;  // guard against duplicate sends
+    sendingRef.current = true;
     // Abort any existing stream
     abortRef.current?.abort();
 
@@ -183,6 +193,7 @@ export default function App() {
       try {
         const session = await createSession('New chat', provider);
         setSessions(prev => [session, ...prev]);
+        skipNextFetchRef.current = true;
         setActiveSessionId(session.id);
         sessionId = session.id;
       } catch {
@@ -264,11 +275,13 @@ export default function App() {
             : m
         ));
         setStreaming(false);
+        sendingRef.current = false;
         setError(err.message);
       },
     });
 
     abortRef.current = ctrl;
+    sendingRef.current = false; // stream launched — allow next send
   }, [activeSessionId, provider, researchMode]);
 
   // ── Switch provider ──
@@ -301,7 +314,7 @@ export default function App() {
         <SessionSidebar
           sessions={sessions}
           activeSessionId={activeSessionId}
-          onSelectSession={(id) => { setActiveSessionId(id); setArtifact(null); }}
+          onSelectSession={(id) => { abortRef.current?.abort(); setActiveSessionId(id); setArtifact(null); }}
           onNewChat={handleNewChat}
           onDeleteSession={handleDeleteSession}
           onRenameSession={handleRenameSession}
@@ -329,7 +342,7 @@ export default function App() {
                 content={msg.content}
                 skillUsed={msg.skill_used || msg.skillUsed}
                 sources={msg.sources}
-                artifact={msg.artifact}
+                artifact={msg.artifact || msg.artifact_json}
                 onOpenArtifact={setArtifact}
                 isStreaming={msg._streaming}
                 agentStep={msg._streaming ? agentStep : ''}

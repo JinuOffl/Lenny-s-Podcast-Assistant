@@ -155,6 +155,16 @@ def extract_artifact(text: str) -> Tuple[str, Optional[Dict]]:
         response_text = outside or "Here's the artifact I generated:"
         return response_text, {"type": artifact_type, "content": artifact_content}
 
+    # Fallback: unclosed <artifact> tag (LLM omitted </artifact>)
+    open_pattern = r'<artifact\s+type=["\'](\w+)["\']\s*>(.*)'
+    open_match = re.search(open_pattern, text, re.DOTALL | re.IGNORECASE)
+    if open_match:
+        artifact_type = open_match.group(1).lower()
+        artifact_content = open_match.group(2).strip()
+        outside = text[: open_match.start()].strip()
+        response_text = outside or "Here's the artifact I generated:"
+        return response_text, {"type": artifact_type, "content": artifact_content}
+
     # Fallback: if LLM output looks like raw HTML, wrap it
     stripped = text.strip()
     if stripped.lower().startswith("<!doctype html") or stripped.lower().startswith("<html"):

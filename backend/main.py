@@ -402,11 +402,37 @@ async def chat_stream(session_id: UUID, body: ChatRequest):
         smart_title = None   # set on first message only, piped into done event
 
         try:
-            # ── Artifact: blocking (full response needed for tag parsing) ──────
+            # ── Artifact: two-call split — live step feedback via queue ──────────
             if skill == "artifact":
-                yield f"data: {json.dumps({'step': 'Searching'})}\n\n"
-                async with get_conn() as conn:
-                    result = await run_artifact(body.message, provider, conn, history=history)
+                import asyncio as _asyncio
+                step_q: _asyncio.Queue = _asyncio.Queue()
+
+                async def _step_cb(step: str):
+                    await step_q.put(step)
+
+                async def _run_artifact():
+                    async with get_conn() as _conn:
+                        return await run_artifact(
+                            body.message, provider, _conn,
+                            history=history, step_callback=_step_cb,
+                        )
+
+                artifact_task = _asyncio.ensure_future(_run_artifact())
+
+                # Drain step events while artifact task runs
+                while not artifact_task.done():
+                    try:
+                        step_label = step_q.get_nowait()
+                        yield f"data: {json.dumps({'step': step_label})}\n\n"
+                    except _asyncio.QueueEmpty:
+                        await _asyncio.sleep(0.05)
+
+                result = await artifact_task
+                # Flush any remaining steps
+                while not step_q.empty():
+                    step_label = step_q.get_nowait()
+                    yield f"data: {json.dumps({'step': step_label})}\n\n"
+
                 response_text = result["response"]
                 sources = result["sources"]
                 artifact = result.get("artifact")
@@ -442,12 +468,12 @@ async def chat_stream(session_id: UUID, body: ChatRequest):
 
                 # Step 2: Stream primary response (essay if requested, else QA)
                 if needs_essay:
-                    yield f"data: {json.dumps({'step': 'Writing...'})}\n\n"
+                    yield f"data: {json.dumps({'step': 'Writing'})}\n\n"
                     from skills.ship30for30 import SYSTEM_PROMPT as SP
                     primary_suffix = "\n\nWrite the full Ship30for30 essay following the template. ~1000-1250 words."
                     _max_tokens = 3500
                 else:
-                    yield f"data: {json.dumps({'step': 'Generating...'})}\n\n"
+                    yield f"data: {json.dumps({'step': 'Generating'})}\n\n"
                     from skills.qa import SYSTEM_PROMPT as SP
                     primary_suffix = ""
                     _max_tokens = 2048
@@ -467,7 +493,7 @@ async def chat_stream(session_id: UUID, body: ChatRequest):
 
                 # Step 3: Generate artifact if requested (blocking, after essay done)
                 if needs_artifact:
-                    yield f"data: {json.dumps({'step': 'Building...'})}\n\n"
+                    yield f"data: {json.dumps({'step': 'Building'})}\n\n"
                     complete_essay = "".join(full_response)
                     enriched_history = list(history) + [
                         {"role": "user",      "content": body.message},
@@ -481,7 +507,7 @@ async def chat_stream(session_id: UUID, body: ChatRequest):
 
             # ── Q&A / Ship30: stream with RAG context ─────────────────────────
             else:
-                yield f"data: {json.dumps({'step': 'Searching...'})}\n\n"
+                yield f"data: {json.dumps({'step': 'Searching'})}\n\n"
                 from rag import retrieve, build_context, dedupe_sources
                 async with get_conn() as conn:
                     chunks = await retrieve(body.message, conn, top_k=6 if skill == "ship30for30" else 5)
@@ -489,10 +515,10 @@ async def chat_stream(session_id: UUID, body: ChatRequest):
                     sources = dedupe_sources(chunks)
 
                 if skill == "ship30for30":
-                    yield f"data: {json.dumps({'step': 'Writing..'})}\n\n"
+                    yield f"data: {json.dumps({'step': 'Writing'})}\n\n"
                     from skills.ship30for30 import SYSTEM_PROMPT as SP
                 else:
-                    yield f"data: {json.dumps({'step': 'Generating...'})}\n\n"
+                    yield f"data: {json.dumps({'step': 'Generating'})}\n\n"
                     from skills.qa import SYSTEM_PROMPT as SP
 
                 messages = list(history) + [{

@@ -134,12 +134,19 @@ function HtmlCodeBlock({ code, onOpenArtifact }) {
 
 /**
  * AgentStatus — single animated row that transitions in-place.
- * Shows "Thinking..." by default; swaps to agentStep label when one arrives.
- * Mimics Claude's "Figuring... → Searching... → Writing..." UX.
- * Dots always animate regardless of step — consistent across all states.
+ * Shows "Thinking" by default; swaps to agentStep label when one arrives.
  */
+function stripEmoji(str) {
+  return str
+    .replace(/[\u{1F000}-\u{1FFFF}]/gu, '')
+    .replace(/[\u2600-\u27BF]/gu, '')
+    .replace(/\uFE0F/g, '')
+    .replace(/^[\s\W]+/, '')
+    .trim();
+}
+
 function AgentStatus({ step }) {
-  const label = step || 'Thinking';
+  const label = step ? stripEmoji(step) || step : 'Thinking';
   return (
     <div key={label} className="flex items-center gap-1.5 h-5 animate-fade-up">
       <span className="text-sm text-text-muted italic">{label}</span>

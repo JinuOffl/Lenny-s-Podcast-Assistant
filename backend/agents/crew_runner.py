@@ -74,7 +74,7 @@ async def run_research_pipeline(
         return f"data: {json.dumps(data)}\n\n"
 
     # ── Phase 1: Orchestrator ─────────────────────────────────────────────────
-    yield await emit({"agent": "OrchestratorAgent", "step": "🧠 Analyzing your research request..."})
+    yield await emit({"agent": "OrchestratorAgent", "step": "Analyzing request..."})
 
     try:
         ctx = await run_orchestrator(ctx, provider)
@@ -84,32 +84,32 @@ async def run_research_pipeline(
         from agents.orchestrator import _keyword_plan
         ctx.plan = _keyword_plan(user_query)
 
-    yield await emit({"agent": "OrchestratorAgent", "step": f"📋 {ctx.plan.reasoning or 'Plan ready'}"})
+    yield await emit({"agent": "OrchestratorAgent", "step": ctx.plan.reasoning or "Planning complete"})
 
     # ── Phase 2: Research ─────────────────────────────────────────────────────
     # Skip research for pure follow-up queries
     is_followup = _is_followup(user_query, history)
 
     if is_followup:
-        yield await emit({"agent": "ResearchAgent", "step": "💬 Continuing from conversation context..."})
+        yield await emit({"agent": "ResearchAgent", "step": "Continuing from context..."})
         ctx.plan.needs_qa = True
         ctx.plan.needs_essay = False
         ctx.skill_used = "followup"
     else:
-        yield await emit({"agent": "ResearchAgent", "step": "🔍 Searching Lenny's podcast transcripts..."})
+        yield await emit({"agent": "ResearchAgent", "step": "Searching transcripts..."})
 
         try:
             ctx = await run_research_agent(ctx, conn)
         except Exception as e:
             print(f"[crew_runner] ResearchAgent failed: {e}")
-            yield await emit({"agent": "ResearchAgent", "step": f"⚠️  Search failed — proceeding with limited context"})
+            yield await emit({"agent": "ResearchAgent", "step": "Search partial — limited context"})
 
         # Emit research summary event
         src_count = len(ctx.sources)
-        hop_str = f"{ctx.search_hops} search hop{'s' if ctx.search_hops > 1 else ''}"
+        hop_str = f"{ctx.search_hops} hop{'s' if ctx.search_hops > 1 else ''}"
         yield await emit({
             "agent": "ResearchAgent",
-            "step": f"✅ Found {len(ctx.chunks)} relevant chunks from {src_count} episode{'s' if src_count != 1 else ''} ({hop_str})",
+            "step": f"Found {len(ctx.chunks)} chunks from {src_count} episode{'s' if src_count != 1 else ''} ({hop_str})",
             "sources_found": src_count,
         })
 
@@ -123,15 +123,15 @@ async def run_research_pipeline(
         artifact_task = asyncio.create_task(
             run_artifact_agent(ctx, provider, conn)
         )
-        yield await emit({"agent": "ArtifactAgent", "step": "🎨 Building dashboard in background..."})
+        yield await emit({"agent": "ArtifactAgent", "step": "Building dashboard..."})
 
     # Stream WriterAgent tokens to user (foreground)
     if ctx.plan.needs_essay:
-        yield await emit({"agent": "WriterAgent", "step": "✍️  Writing Ship30for30 essay..."})
+        yield await emit({"agent": "WriterAgent", "step": "Writing essay..."})
     elif is_followup:
-        yield await emit({"agent": "WriterAgent", "step": "💬 Crafting response from context..."})
+        yield await emit({"agent": "WriterAgent", "step": "Continuing..."})
     else:
-        yield await emit({"agent": "WriterAgent", "step": "🔬 Synthesizing research into answer..."})
+        yield await emit({"agent": "WriterAgent", "step": "Synthesizing..."})
 
     try:
         async for token in stream_writer_response(ctx, provider):
@@ -145,21 +145,21 @@ async def run_research_pipeline(
                 pass
     except Exception as e:
         print(f"[crew_runner] WriterAgent streaming failed: {e}")
-        yield await emit({"agent": "WriterAgent", "step": f"⚠️  Writer error: {str(e)[:100]}"})
-        ctx.primary_response = f"⚠️ Research mode encountered an error: {e}. Please try again."
+        yield await emit({"agent": "WriterAgent", "step": f"Writer error: {str(e)[:80]}"})
+        ctx.primary_response = f"Research mode encountered an error: {e}. Please try again."
 
     # Wait for artifact background task to complete
     if artifact_task is not None:
         try:
-            yield await emit({"agent": "ArtifactAgent", "step": "⏳ Finalizing dashboard..."})
+            yield await emit({"agent": "ArtifactAgent", "step": "Finalizing dashboard..."})
             ctx = await artifact_task
         except Exception as e:
             print(f"[crew_runner] ArtifactAgent failed: {e}")
             ctx.artifact = None
-            yield await emit({"agent": "ArtifactAgent", "step": f"⚠️  Dashboard generation failed: {str(e)[:80]}"})
+            yield await emit({"agent": "ArtifactAgent", "step": f"Dashboard failed: {str(e)[:80]}"})
 
     # ── Phase 4: Validator ────────────────────────────────────────────────────
-    yield await emit({"agent": "ValidatorAgent", "step": "✅ Validating output quality..."})
+    yield await emit({"agent": "ValidatorAgent", "step": "Validating output..."})
 
     try:
         ctx = await run_validator_agent(ctx, provider, conn, event_queue)
@@ -171,7 +171,8 @@ async def run_research_pipeline(
 
     except Exception as e:
         print(f"[crew_runner] ValidatorAgent failed: {e}")
-        yield await emit({"agent": "ValidatorAgent", "step": f"⚠️  Validation skipped: {str(e)[:80]}"})
+        yield await emit({"agent": "ValidatorAgent", "step": f"Validation skipped: {str(e)[:80]}"})
+
 
     # ── Done ──────────────────────────────────────────────────────────────────
     done_event = {

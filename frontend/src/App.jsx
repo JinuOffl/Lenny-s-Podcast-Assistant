@@ -31,7 +31,20 @@ const SUGGESTIONS = [
 
 function EmptyState({ onSuggestion }) {
   return (
-    <div className="flex flex-col items-center justify-center flex-1 px-6 pb-20">
+    <div className="flex flex-col items-center justify-center flex-1 px-6 pb-20 relative overflow-hidden">
+      {/* Dot-grid texture — empty state only, pointer-events:none */}
+      <div
+        aria-hidden
+        style={{
+          position: 'absolute',
+          inset: 0,
+          pointerEvents: 'none',
+          backgroundImage: 'radial-gradient(circle, rgba(255,255,255,0.09) 1px, transparent 1px)',
+          backgroundSize: '24px 24px',
+          maskImage: 'radial-gradient(ellipse 70% 60% at 50% 50%, black 40%, transparent 100%)',
+          WebkitMaskImage: 'radial-gradient(ellipse 70% 60% at 50% 50%, black 40%, transparent 100%)',
+        }}
+      />
       <div className="w-10 h-10 rounded-xl bg-white flex items-center justify-center mb-6">
         <span className="text-black font-black text-lg leading-none">L</span>
       </div>
@@ -44,15 +57,23 @@ function EmptyState({ onSuggestion }) {
           <button
             key={i}
             onClick={() => onSuggestion(s.text)}
-            className="text-left px-3.5 py-2.5 rounded-xl border border-border bg-bg-surface
+            className="text-left px-3.5 py-2.5 rounded-lg border border-border bg-bg-surface
                        hover:border-white/15 hover:bg-bg-elevated transition-all duration-150 group"
           >
-            <span className={`text-[9px] font-semibold uppercase tracking-widest block mb-1 ${
-              s.label === 'Q&A'      ? 'text-skill-qa'
-            : s.label === 'Essay'   ? 'text-skill-ship30'
-            : s.label === 'Multi'   ? 'text-amber-400'
-            : 'text-skill-artifact'
-            }`}>{s.label}</span>
+            <span
+              className="block mb-1"
+              style={{
+                fontFamily: "'JetBrains Mono', monospace",
+                fontSize: '9px',
+                fontWeight: 500,
+                letterSpacing: '0.08em',
+                textTransform: 'uppercase',
+                color: s.label === 'Q&A'      ? '#4E7AC7'
+                     : s.label === 'Essay'    ? '#7059C4'
+                     : s.label === 'Multi'    ? '#C4851A'
+                     : '#3D9068',
+              }}
+            >{s.label}</span>
             <p className="text-xs text-text-secondary group-hover:text-text-primary transition-colors leading-snug">{s.text}</p>
           </button>
         ))}
@@ -65,10 +86,10 @@ function StatusDot({ healthy }) {
   return (
     <div className="flex items-center gap-1.5">
       {healthy
-        ? <span className="w-1.5 h-1.5 rounded-full bg-skill-artifact" />
-        : <WifiOff className="w-3.5 h-3.5 text-red-400" />
+        ? <span className="w-1.5 h-1.5 rounded-full bg-white/60" />
+        : <WifiOff className="w-3.5 h-3.5 text-amber-500" />
       }
-      <span className={`text-[10px] font-medium ${healthy ? 'text-text-muted' : 'text-red-400'}`}>
+      <span className={`text-[10px] font-medium font-mono ${healthy ? 'text-text-muted' : 'text-amber-500'}`}>
         {healthy ? 'Live' : 'Offline'}
       </span>
     </div>
@@ -78,10 +99,10 @@ function StatusDot({ healthy }) {
 function ErrorBanner({ message, onDismiss }) {
   if (!message) return null;
   return (
-    <div className="flex items-center gap-2 px-4 py-2 bg-red-950/50 border-b border-red-900/40 text-red-300 text-xs">
+    <div className="flex items-center gap-2 px-4 py-2 bg-amber-950/40 border-b border-amber-800/30 text-amber-300 text-xs">
       <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
       <span className="flex-1">{message}</span>
-      <button onClick={onDismiss} className="text-red-400 hover:text-red-200 font-bold">×</button>
+      <button onClick={onDismiss} className="text-amber-400 hover:text-amber-200 font-bold">×</button>
     </div>
   );
 }

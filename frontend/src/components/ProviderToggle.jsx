@@ -37,7 +37,7 @@ export default function ProviderToggle({ provider, onChange, modelName }) {
               {label}
               {/* Always-visible active dot */}
               {isActive && (
-                <span className="w-1.5 h-1.5 rounded-full bg-skill-artifact flex-shrink-0" />
+                <span className="w-1.5 h-1.5 rounded-full bg-black/40 flex-shrink-0" />
               )}
             </button>
           );

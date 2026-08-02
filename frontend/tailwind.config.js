@@ -29,11 +29,11 @@ export default {
         },
         /* Accent — white only, like Nothing */
         accent: '#FFFFFF',
-        /* Skill colours — muted, not neon */
+        /* Skill colours — muted, desaturated (Part 2 Item 1) */
         skill: {
-          qa:       '#5B8DEF',   /* soft blue */
-          ship30:   '#8B6EE8',   /* soft purple */
-          artifact: '#4CAF82',   /* soft green */
+          qa:       '#4E7AC7',   /* was #5B8DEF — desaturated soft blue */
+          ship30:   '#7059C4',   /* was #8B6EE8 — desaturated slate-purple */
+          artifact: '#3D9068',   /* was #4CAF82 — desaturated soft green */
         },
       },
 

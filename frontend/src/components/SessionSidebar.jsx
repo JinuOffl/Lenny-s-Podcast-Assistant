@@ -131,7 +131,7 @@ function SessionRow({ session, isActive, onSelect, onDelete, onRename }) {
           title={session.title}
         >
           <p className="text-xs font-medium truncate leading-snug">{displayTitle}</p>
-          <p className="text-[10px] text-text-muted mt-0.5">{timeAgo(session.created_at)}</p>
+          <p className="text-[10px] text-text-muted mt-0.5 font-mono">{timeAgo(session.created_at)}</p>
         </button>
       )}
 
@@ -261,7 +261,7 @@ export default function SessionSidebar({
 
       {/* Footer */}
       <div className="px-4 py-3 border-t border-border-subtle">
-        <p className="text-[10px] text-text-muted text-center">180 episodes · 4,604 chunks</p>
+        <p className="text-[10px] text-text-muted text-center font-mono">180 episodes · 4,604 chunks</p>
       </div>
     </aside>
   );

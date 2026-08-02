@@ -52,7 +52,7 @@ function ArtifactCard({ artifact, onClick }) {
     <button
       onClick={onClick}
       className="flex items-center gap-3 w-full max-w-[340px] mt-3 px-3.5 py-2.5
-                 rounded-xl border border-skill-artifact/25 bg-bg-elevated
+                 rounded-lg border border-skill-artifact/25 bg-bg-elevated
                  hover:border-skill-artifact/50 hover:bg-bg-elevated/80
                  transition-all duration-150 text-left group"
     >
@@ -103,7 +103,7 @@ ${code}
 function HtmlCodeBlock({ code, onOpenArtifact }) {
   const [copied, setCopied] = useState(false);
   return (
-    <div className="relative my-3 rounded-xl overflow-hidden border border-skill-artifact/20">
+    <div className="relative my-3 rounded-lg overflow-hidden border border-skill-artifact/20">
       <div className="flex items-center justify-between px-3 py-1.5 bg-bg-elevated border-b border-skill-artifact/15">
         <span className="text-[10px] font-mono text-skill-artifact/70 font-semibold tracking-wide">html</span>
         <div className="flex items-center gap-1.5">

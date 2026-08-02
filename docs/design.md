@@ -1,124 +1,79 @@
-﻿# Lenny's Growth Assistant — Design System
+# Lensight (Lenny's Growth Assistant) — Design System
 
 ## 1. Overview
 
-Lenny's Growth Assistant is a single-page AI chat interface for product and growth
-practitioners — querying a corpus of ~180 Lenny's Podcast episodes. The visual
-personality is **dark, functional, and deliberately restrained**: near-pure black
-backgrounds, white-only accents, fine monochrome borders, and a strict four-color
-semantic category system for skill types. The UI is a tool, not a marketing site —
-information density takes priority over decoration, and every color choice either
-communicates hierarchy or carries semantic meaning (category coding).
+**Lensight** is a single-page AI chat interface for product and growth practitioners — querying a corpus of ~180 Lenny's Podcast episodes. The visual personality is **dark, functional, and restrained**: near-pure black backgrounds, white-only accents, fine monochrome borders, and a strict semantic category system for skill types. Information density takes priority over decoration, and every visual element communicates state or hierarchy.
 
 ---
 
-## 2. Colors
+## 2. Brand & Typography
+ 
+### Brand Identity
+- **Name:** Lensight
+- **Sidebar Header:** `Lens` in primary white text + `ight` in lighter italic muted style (`font-style: italic`, `opacity: 0.7`).
+- **Logo Badge:** Square `L` icon with pure white background and black bold typography.
 
-### Background levels (dark → light)
-| Token | Hex | Role |
+### Typography & Fonts
+- **Inter** (variable 300–700 + italic) — primary UI text font.
+- **JetBrains Mono** — code blocks, execution metrics, timestamps, model indicators.
+
+---
+
+## 3. Colors & Tokens
+
+### Background Levels
+| Token | Hex / Value | Role |
 |---|---|---|
 | `bg-base` | `#0D0D0D` | App canvas — near-pure black |
-| `bg-surface` | `#141414` | Sidebar, artifact pane, card surfaces |
+| `bg-surface` | `#141414` | Sidebar, artifact pane, cards |
 | `bg-elevated` | `#1C1C1C` | Hover states, inputs, dropdowns |
 | `bg-user-msg` | `#1F1F1F` | User chat bubble |
 
-### Borders
-| Token | Hex | Role |
+### Text Tokens
+| Token | Hex / Value | Role |
 |---|---|---|
-| `border` DEFAULT | `#262626` | Standard — buttons, panels |
-| `border-subtle` | `#1E1E1E` | Quiet dividers — sidebar edge |
+| `text-primary` | `#F2F2F2` | Headings, primary text |
+| `text-secondary` | `#888888` | Secondary content, session titles |
+| `text-muted` | `#555555` | Meta labels, timestamps, placeholders |
 
-### Text
-| Token | Hex | Role |
-|---|---|---|
-| `text-primary` | `#F2F2F2` | Headings, primary content |
-| `text-secondary` | `#888888` | Session titles, descriptions |
-| `text-muted` | `#555555` | Timestamps, placeholders, meta |
-
-### Accent
-White `#FFFFFF` is the sole accent — avatar squares, active pill bg, send button.
-
-### Skill category colors (semantic, not decorative)
-| Skill | Hex | Config token |
+### Semantic Skill Colors
+| Skill | Hex | Config token / Role |
 |---|---|---|
 | Q&A | `#5B8DEF` | `skill-qa` |
 | Essay | `#8B6EE8` | `skill-ship30` |
 | Artifact | `#4CAF82` | `skill-artifact` |
-| Multi | `#F5A623` | inline in SkillBadge |
-| Research | `#F97316` | inline in SkillBadge |
-| Follow-up | `#9E9E9E` | inline in SkillBadge |
+| Multi | `#F5A623` | `SkillBadge` orange accent |
+| Research | `#F97316` | Research Mode toggle / stats |
 
 ---
 
-## 3. Typography
+## 4. Key UI Components
 
-Fonts loaded in `index.css` via Google Fonts:
-- **Inter** (variable 300–700 + italic) — all UI text currently
-- **JetBrains Mono** (400, 500) — only inside `.prose-chat code/pre`
+### 1. Capability Chips (Empty State)
+Centered below the chat input when no messages exist in the active session and input draft is empty:
+- **Essay:** `BookOpen` icon (`rgba(112,89,196,0.6)`)
+- **Q&A:** `Lightbulb` icon (`rgba(78,122,199,0.6)`)
+- **Insights:** `BarChart2` icon (`rgba(61,144,104,0.6)`)
+- **Dashboard:** `Layers` icon (`rgba(196,133,26,0.6)`)
 
-Gap: timestamps, model name, episode count footer use Inter but should use mono
-(machine data vs human content — see Do's and Don'ts).
+*Behavior:* Auto-hides when user types draft text or sends first query.
 
----
+### 2. Monochrome AgentTracker (Research Mode)
+Pipeline status indicator rendered above streaming responses in Research Mode:
+- **Style:** Monochrome dark palette using opacities of white (`rgba(255,255,255,...)`), replacing bright decorative multi-colors.
+- **States:**
+  - `pending`: white/4 dot (`rgba(255,255,255,0.04)`)
+  - `active`: white/12 background + spinning `Loader2`
+  - `healing`: white/10 background + pulsing `Wrench` icon
+  - `done`: white/8 background + subtle `Check` icon
+- **Step Text:** Clean plain text (emojis automatically stripped via `cleanStep`).
 
-## 4. Elevation
+### 3. AgentStatus Row (Classic Mode)
+- Animated label (`Thinking...` → `Searching...` → `Generating...` → `Repairing...`).
+- Styled in `text-text-muted italic` with three synchronized animated pulse dots.
+- Emojis stripped defensively via `stripEmoji()` utility to maintain visual restraint.
 
-Depth via background steps and borders only — no drop shadows in the main layout.
-
-| Layer | Technique |
-|---|---|
-| Base → Surface | `#0D0D0D` → `#141414` step |
-| Surface → Elevated | hover lifts to `#1C1C1C` |
-| Panel edges | 1px `border-subtle` |
-| Artifact pane edge | `border-l-2 border-white/10` + left-shadow (only shadow in main UI) |
-| Active session | 2px white left bar |
-| Dropdowns | `shadow-xl shadow-black/40` over elevated bg |
-
----
-
-## 5. Components
-
-### Chat bubble — User
-Right-aligned, `bg-user-msg`, `border border-white/10`, `rounded-2xl rounded-br-md`,
-with "U" avatar circle on the right.
-
-### Chat bubble — Assistant
-Left-aligned up to 760px, "L" white square avatar, `.prose-chat` prose, hover-revealed
-action bar (copy, retry, artifact link), always-visible skill badge below.
-
-### Sidebar session row
-`text-xs` truncated title + `timeAgo`, active state = `bg-elevated` + white left bar,
-3-dot menu with rename/delete.
-
-### Skill badge (SkillBadge)
-`rounded-full` border-only pill, 10px text, dot indicator. No fill — border at 25%
-opacity, text at 80%, dot at 100% of skill color.
-
-### Suggestion / prompt card (EmptyState)
-`rounded-xl` card, `bg-surface border-border`, category label in 9px uppercase
-tracking-widest in skill color, body in `text-secondary`.
-
-### Provider toggle (ProviderToggle)
-`bg-elevated border-border rounded-lg` container, active option `bg-white text-black` +
-green dot, inactive `text-muted`.
-
-### Artifact pane (ArtifactPane)
-Full-height right drawer, `bg-surface`, separated by `border-l-2 border-white/10` +
-shadow. Preview/Code tabs via Radix UI.
-
----
-
-## 6. Do's and Don'ts
-
-### Do
-- Keep the 4-color category system (Q&A / Essay / Artifact / Multi) — functional, not decorative.
-- Use JetBrains Mono for machine/system text: timestamps, model names, stats, counts.
-- Use white as the sole accent — keep the "monochrome + category touches" language.
-- Use background steps for elevation, not shadows (except floating elements).
-
-### Don't
-- **Don't use red** — banned, full stop. Use amber (`#D97706` range) or neutral gray for errors/warnings.
-- Don't use gradients (background fills, button fills — flat only).
-- Don't use nested cards.
-- Don't use default Tailwind saturated hues — all category colors are hand-tuned desaturated variants.
-- Don't use drop shadows for primary content separation — use borders instead.
+### 4. Split-Pane Artifact Viewer
+- Slides in from right when an HTML or Markdown artifact is active (420px width).
+- Interactive tab switch: `Preview` (iframe sandbox) ↔ `Code` (syntax-highlighted raw source).
+- Header includes artifact title, copy button, and close controls.

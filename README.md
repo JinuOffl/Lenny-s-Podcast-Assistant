@@ -1,12 +1,13 @@
-# Lenny's Growth Assistant
+# Lensight (Lenny's Growth Assistant)
 
-A full-stack AI conversational web app that answers product/growth questions grounded in Lenny's Podcast transcripts, generates Ship30for30-style atomic essays, and renders HTML/Markdown artifacts in a split-pane viewer.
+A full-stack AI conversational web app that answers product/growth questions grounded in Lenny's Podcast transcripts, generates Ship30for30-style atomic essays, and renders HTML/Markdown artifacts in a split-pane viewer using a robust two-call split architecture and a 5-agent Research Mode pipeline.
 
 **Stack:** FastAPI · Supabase Postgres + pgvector · Ollama · React + Vite + Tailwind
 
 **Built with Compound Engineering** — AI coding assistant (Antigravity/Gemini) used throughout development following a structured PRD → architecture → phased execution workflow. See [`agent-transcripts/`](./agent-transcripts/) for real failures, debugging sessions, and corrections from the build process.
 
 ---
+
 
 ## Prerequisites
 
@@ -38,7 +39,7 @@ ollama pull llama3.3:8b       # ~5GB, higher quality
 ### 1. Clone and configure
 
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/JinuOffl/Lenny-s-Podcast-Assistant.git
 cd lenny-growth-assistant
 cp .env.example .env
 ```
@@ -117,9 +118,12 @@ Open: **http://localhost:5173**
 | **Artifact** | "Build me a landing page summarizing Lenny's lessons on PLG" |
 | **Multi-skill** | "Write an essay on retention AND create an HTML visualization of the key metrics" |
 
+- **Classic Mode** (default) — fast keyword + LLM router → single skill response
+- **Research Mode** — click the **Research** toggle next to the input to activate the 5-agent pipeline (Orchestrator → Research → Writer + Artifact → Validator). Shows live agent steps as each phase runs.
 - **LLM toggle** (header) — switch between Local (Ollama) and Cloud (Anthropic)
 - **Sources** — click "X sources cited" under any response to see episode citations with YouTube links
 - **Artifact pane** — Preview tab renders HTML in a sandboxed iframe; Source tab shows raw code with copy button
+- **Confidence badge** — Research Mode responses show High / Medium / Low based on number of source episodes
 
 ---
 
@@ -160,31 +164,43 @@ This is a config change, not an architecture change.
 ```
 lenny-growth-assistant/
 ├── backend/
-│   ├── main.py           # FastAPI app + all 6 endpoints
-│   ├── config.py         # Pydantic settings from .env
-│   ├── db.py             # psycopg3 async pool + schema DDL
-│   ├── rag.py            # nomic-embed-text + pgvector retrieval
-│   ├── llm.py            # OllamaProvider / AnthropicProvider
-│   ├── router.py         # classify_skill() — LLM-based agentic classifier (5 skills + fallback)
-│   ├── models.py         # Pydantic request/response schemas
+│   ├── main.py               # FastAPI app — all endpoints, lifespan
+│   ├── config.py             # Pydantic settings from .env
+│   ├── db.py                 # psycopg3 async pool + schema DDL
+│   ├── rag.py                # nomic-embed-text + pgvector retrieval
+│   ├── llm.py                # LLMProvider ABC, OllamaProvider, AnthropicProvider
+│   ├── router.py             # 2-stage skill classifier (instant + LLM, 5 skills)
+│   ├── models.py             # Pydantic request/response schemas
 │   ├── requirements.txt
-│   └── skills/
-│       ├── qa.py         # Grounded Q&A with retrieval-sourced citations
-│       ├── ship30for30.py # Atomic essay generation (Ship30for30 framework)
-│       └── artifact.py   # HTML/Markdown artifact generation + tag parsing
-├── frontend/             # Vite + React 18 + Tailwind v3
+│   ├── agents/               # Research Mode 5-agent pipeline
+│   │   ├── shared_context.py # SharedContext + ExecutionPlan dataclasses
+│   │   ├── crew_runner.py    # Pipeline orchestrator (asyncio.gather)
+│   │   ├── orchestrator.py   # OrchestratorAgent (LLM → JSON plan)
+│   │   ├── research.py       # ResearchAgent (multi-hop RAG, no LLM)
+│   │   ├── writer.py         # WriterAgent (streaming QA + essay)
+│   │   ├── artifact_agent.py # ArtifactAgent (2-call: intro + HTML)
+│   │   └── validator.py      # ValidatorAgent + self-healing loop
+│   ├── skills/               # Classic mode skills
+│   │   ├── qa.py             # Grounded Q&A with retrieval-sourced citations
+│   │   ├── ship30for30.py    # Atomic essay generation (Ship30for30 framework)
+│   │   └── artifact.py       # HTML artifact generation (2-call split)
+│   └── tools/                # Pure-Python agent tools
+│       ├── search_tool.py    # execute_search() + execute_multi_hop_search()
+│       ├── validate_tool.py  # validate_html(), validate_essay()
+│       └── count_tool.py     # word count, citation counting
+├── frontend/                 # Vite + React 18 + Tailwind v3
 │   └── src/
-│       ├── App.jsx       # Root shell: sidebar + chat + artifact pane
-│       ├── api.js        # HTTP client (all backend calls)
-│       └── components/   # ChatMessage, ArtifactPane, SessionSidebar, ...
+│       ├── App.jsx           # Root shell: sidebar + chat + artifact pane
+│       ├── api.js            # streamChat() + streamResearchChat()
+│       └── components/       # 12 components (see architecture.md)
 ├── scripts/
-│   └── ingest.py         # Clone → chunk → embed → upsert pipeline
+│   └── ingest.py             # Clone → chunk → embed → upsert pipeline
 ├── docs/
-│   ├── PRD.md            # Product requirements
-│   ├── architecture.md   # System design + key decisions
-│   └── design.md         # UI/UX design system
+│   ├── PRD.md                # Product requirements
+│   ├── architecture.md       # System design + ASCII diagrams + key decisions
+│   └── design.md             # UI/UX design system (Lensight)
 ├── agent-transcripts/
-│   └── LESSONS.md        # 8+ real failures from the build + fixes
+│   └── LESSONS.md            # Real failures from the build + how they were fixed
 ├── .env.example
 └── README.md
 ```

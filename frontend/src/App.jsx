@@ -454,7 +454,9 @@ export default function App() {
             placeholder={researchMode ? 'Ask anything — Research Mode active (5 agents)…' : 'Ask anything about growth…'}
             researchMode={researchMode}
             onResearchModeChange={setResearchMode}
+            hasMessages={messages.length > 0}
           />
+
         </main>
 
         {artifact && (

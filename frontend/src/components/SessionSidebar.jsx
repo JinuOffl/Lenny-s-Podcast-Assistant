@@ -198,8 +198,11 @@ export default function SessionSidebar({
         <div className="w-6 h-6 rounded-md bg-white flex items-center justify-center flex-shrink-0">
           <span className="text-black font-black text-[11px] leading-none">L</span>
         </div>
-        <span className="text-sm font-semibold text-text-primary tracking-tight">Lenny</span>
+        <span className="text-sm font-semibold text-text-primary tracking-tight">
+          Lens<em className="not-italic" style={{ fontStyle: 'italic', opacity: 0.7, fontWeight: 400 }}>ight</em>
+        </span>
       </div>
+
 
       {/* New Chat */}
       <div className="px-3 pb-3 relative">

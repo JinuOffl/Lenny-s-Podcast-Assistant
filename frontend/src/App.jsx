@@ -4,7 +4,8 @@
  * auto-title refresh, proper conversation memory.
  */
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { WifiOff, AlertCircle } from 'lucide-react';
+import { WifiOff, AlertCircle, Download, Menu } from 'lucide-react';
+
 
 import SessionSidebar   from './components/SessionSidebar';
 import ChatMessage      from './components/ChatMessage';
@@ -102,6 +103,8 @@ export default function App() {
   // Research Mode
   const [researchMode,   setResearchMode]   = useState(false);
   const [agentSteps,     setAgentSteps]     = useState([]);
+  // Item 5: sidebar toggle for narrow viewports
+  const [sidebarOpen, setSidebarOpen]       = useState(true);
 
   const bottomRef    = useRef(null);
   const abortRef     = useRef(null); // stores current SSE AbortController
@@ -296,14 +299,76 @@ export default function App() {
     }
   }, [provider]);
 
+  // ── Item 6: Retry last user message ──
+  const handleRetry = useCallback((assistantMsgId) => {
+    // Find the user message that immediately precedes this assistant message
+    const idx = messages.findIndex(m => m.id === assistantMsgId);
+    if (idx <= 0) return;
+    const userMsg = messages.slice(0, idx).reverse().find(m => m.role === 'user');
+    if (!userMsg) return;
+    // Remove the assistant message, re-send
+    setMessages(prev => prev.filter(m => m.id !== assistantMsgId));
+    handleSend(userMsg.content);
+  }, [messages, handleSend]);
+
+  // ── Item 8: Export conversation ──
+  const handleExport = useCallback(() => {
+    if (!messages.length) return;
+    const session = sessions.find(s => s.id === activeSessionId);
+    const title = session?.title || 'Conversation';
+    let md = `# ${title}\n\n`;
+    messages.forEach(m => {
+      if (m.role === 'user') {
+        md += `**User:** ${m.content}\n\n`;
+      } else {
+        md += `**Assistant:** ${m.content}\n`;
+        if (m.artifact?.content) md += `\n\`\`\`\n${m.artifact.content}\n\`\`\`\n`;
+        md += '\n';
+      }
+    });
+    const blob = new Blob([md], { type: 'text/markdown' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = `${title.replace(/[^a-z0-9]/gi, '_')}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [messages, sessions, activeSessionId]);
+
   return (
     <div className="flex flex-col h-screen bg-bg-base overflow-hidden">
 
       {/* ── Topbar ──────────────────────────────────────────────────────────── */}
       <header className="flex items-center justify-between px-4 h-11 flex-shrink-0
                          border-b border-border-subtle bg-bg-surface z-10">
-        <StatusDot healthy={healthy} />
-        <ProviderToggle provider={provider} onChange={handleProviderChange} modelName={modelName} />
+        <div className="flex items-center gap-3">
+          {/* Item 5: hamburger on narrow */}
+          <button
+            onClick={() => setSidebarOpen(o => !o)}
+            className="p-1 rounded-md text-text-muted hover:text-text-primary hover:bg-bg-elevated transition-colors sm:hidden"
+            title="Toggle sidebar"
+          >
+            <Menu className="w-4 h-4" />
+          </button>
+          <StatusDot healthy={healthy} />
+        </div>
+        <div className="flex items-center gap-2">
+          {/* Item 8: Export */}
+          {messages.length > 0 && (
+            <button
+              id="export-btn"
+              onClick={handleExport}
+              title="Export conversation as Markdown"
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium
+                         text-text-muted border border-border hover:text-text-primary hover:border-white/20
+                         transition-all duration-150"
+            >
+              <Download className="w-3 h-3" />
+              Export
+            </button>
+          )}
+          <ProviderToggle provider={provider} onChange={handleProviderChange} modelName={modelName} />
+        </div>
       </header>
 
       <ErrorBanner message={error} onDismiss={() => setError('')} />
@@ -311,15 +376,18 @@ export default function App() {
       {/* ── Main ────────────────────────────────────────────────────────────── */}
       <div className="flex flex-1 min-h-0">
 
-        <SessionSidebar
-          sessions={sessions}
-          activeSessionId={activeSessionId}
-          onSelectSession={(id) => { abortRef.current?.abort(); setActiveSessionId(id); setArtifact(null); }}
-          onNewChat={handleNewChat}
-          onDeleteSession={handleDeleteSession}
-          onRenameSession={handleRenameSession}
-          loading={sessionsLoading}
-        />
+        {/* Item 5: hide sidebar on narrow */}
+        <div className={`${sidebarOpen ? 'flex' : 'hidden'} sm:flex flex-shrink-0`}>
+          <SessionSidebar
+            sessions={sessions}
+            activeSessionId={activeSessionId}
+            onSelectSession={(id) => { abortRef.current?.abort(); setActiveSessionId(id); setArtifact(null); setSidebarOpen(false); }}
+            onNewChat={handleNewChat}
+            onDeleteSession={handleDeleteSession}
+            onRenameSession={handleRenameSession}
+            loading={sessionsLoading}
+          />
+        </div>
 
         {/* Chat pane */}
         <main className="flex flex-col flex-1 min-w-0 min-h-0 bg-bg-base">
@@ -338,6 +406,7 @@ export default function App() {
             {messages.map((msg) => (
               <ChatMessage
                 key={msg.id}
+                msgId={msg.id}
                 role={msg.role}
                 content={msg.content}
                 skillUsed={msg.skill_used || msg.skillUsed}
@@ -350,6 +419,7 @@ export default function App() {
                 confidence={msg.confidence}
                 researchStats={msg.researchStats}
                 healingAttempts={msg.healingAttempts || 0}
+                onRetry={handleRetry}
               />
             ))}
 
@@ -367,7 +437,7 @@ export default function App() {
         </main>
 
         {artifact && (
-          <div className="w-[420px] flex-shrink-0 min-h-0 overflow-hidden border-l border-border-subtle">
+          <div className="w-[420px] flex-shrink-0 min-h-0 overflow-hidden border-l-2 border-white/10 shadow-[-4px_0_20px_rgba(0,0,0,0.4)]">
             <ArtifactPane artifact={artifact} onClose={() => setArtifact(null)} />
           </div>
         )}

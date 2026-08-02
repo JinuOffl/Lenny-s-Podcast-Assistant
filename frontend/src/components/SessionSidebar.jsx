@@ -3,7 +3,7 @@
  * 3-dot menu per session: Rename (inline) + Delete (permanent).
  */
 import { useState, useRef, useEffect } from 'react';
-import { Plus, MessageSquare, MoreHorizontal, Pencil, Trash2, Check, X } from 'lucide-react';
+import { Plus, MessageSquare, MoreHorizontal, Pencil, Trash2, Check, X, CheckCircle2 } from 'lucide-react';
 
 function timeAgo(dateStr) {
   const now  = new Date();
@@ -182,6 +182,13 @@ export default function SessionSidebar({
   onNewChat, onDeleteSession, onRenameSession, loading,
 }) {
   const groups = groupSessions(sessions);
+  const [newChatFlash, setNewChatFlash] = useState(false);
+
+  const handleNewChat = () => {
+    onNewChat();
+    setNewChatFlash(true);
+    setTimeout(() => setNewChatFlash(false), 1500);
+  };
 
   return (
     <aside className="flex flex-col w-[240px] flex-shrink-0 h-full bg-bg-surface border-r border-border-subtle overflow-hidden">
@@ -195,17 +202,21 @@ export default function SessionSidebar({
       </div>
 
       {/* New Chat */}
-      <div className="px-3 pb-3">
+      <div className="px-3 pb-3 relative">
         <button
           id="new-chat-btn"
-          onClick={onNewChat}
-          className="flex items-center gap-2 w-full px-3 py-2 rounded-lg border border-border
-                     text-xs text-text-secondary font-medium
-                     hover:border-white/20 hover:text-text-primary hover:bg-bg-elevated
-                     transition-all duration-150 group"
+          onClick={handleNewChat}
+          className={`flex items-center gap-2 w-full px-3 py-2 rounded-lg border
+                     text-xs font-medium transition-all duration-150 group ${
+            newChatFlash
+              ? 'border-skill-artifact/60 bg-skill-artifact/10 text-skill-artifact'
+              : 'border-border text-text-secondary hover:border-white/20 hover:text-text-primary hover:bg-bg-elevated'
+          }`}
         >
-          <Plus className="w-3.5 h-3.5 group-hover:rotate-90 transition-transform duration-200" />
-          New chat
+          {newChatFlash
+            ? <><CheckCircle2 className="w-3.5 h-3.5" /> Chat created!</>
+            : <><Plus className="w-3.5 h-3.5 group-hover:rotate-90 transition-transform duration-200" /> New chat</>
+          }
         </button>
       </div>
 

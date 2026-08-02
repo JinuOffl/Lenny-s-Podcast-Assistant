@@ -9,22 +9,38 @@
 import { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Copy, Check, Layers, Code2, FileText, ExternalLink } from 'lucide-react';
+import { Copy, Check, Layers, Code2, FileText, ExternalLink, RotateCcw } from 'lucide-react';
 import SkillBadge from './SkillBadge';
 import SourcesAccordion from './SourcesAccordion';
 import AgentTracker from './AgentTracker';
 import ConfidenceBadge from './ConfidenceBadge';
 import ResearchStats from './ResearchStats';
 
+// Item 7: copy message text
 function CopyButton({ text }) {
   const [copied, setCopied] = useState(false);
   return (
     <button
       onClick={() => { navigator.clipboard.writeText(text).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1800); }); }}
-      className="p-1.5 rounded-md text-text-muted hover:text-text-secondary hover:bg-bg-elevated transition-all duration-150"
+      className="flex items-center gap-1 p-1.5 rounded-md text-text-muted hover:text-text-secondary hover:bg-bg-elevated transition-all duration-150"
       title="Copy message"
     >
-      {copied ? <Check className="w-3.5 h-3.5 text-skill-artifact" /> : <Copy className="w-3.5 h-3.5" />}
+      {copied
+        ? <><Check className="w-3.5 h-3.5 text-skill-artifact" /><span className="text-[10px] text-skill-artifact">Copied!</span></>
+        : <><Copy className="w-3.5 h-3.5" /></>}
+    </button>
+  );
+}
+
+// Item 6: retry/regenerate
+function RetryButton({ onRetry }) {
+  return (
+    <button
+      onClick={onRetry}
+      className="flex items-center gap-1 p-1.5 rounded-md text-text-muted hover:text-text-secondary hover:bg-bg-elevated transition-all duration-150"
+      title="Regenerate response"
+    >
+      <RotateCcw className="w-3.5 h-3.5" />
     </button>
   );
 }
@@ -120,14 +136,14 @@ function HtmlCodeBlock({ code, onOpenArtifact }) {
  * AgentStatus — single animated row that transitions in-place.
  * Shows "Thinking..." by default; swaps to agentStep label when one arrives.
  * Mimics Claude's "Figuring... → Searching... → Writing..." UX.
+ * Dots always animate regardless of step — consistent across all states.
  */
 function AgentStatus({ step }) {
   const label = step || 'Thinking';
-  const isThinking = !step;
   return (
-    <div key={label} className="flex items-center gap-1 h-5 animate-fade-up">
+    <div key={label} className="flex items-center gap-1.5 h-5 animate-fade-up">
       <span className="text-sm text-text-muted italic">{label}</span>
-      {isThinking && [0, 1, 2].map((i) => (
+      {[0, 1, 2].map((i) => (
         <span
           key={i}
           className="w-1 h-1 rounded-full bg-text-muted animate-thinking"
@@ -143,6 +159,8 @@ export default function ChatMessage({
   isStreaming, agentStep,
   // Research Mode extras
   agentSteps = [], confidence, researchStats, healingAttempts = 0,
+  // Pass 2 features
+  msgId, onRetry,
 }) {
   const [hovered, setHovered] = useState(false);
   const isUser = role === 'user';
@@ -150,10 +168,14 @@ export default function ChatMessage({
   /* ── User message ── */
   if (isUser) {
     return (
-      <div className="flex justify-end px-4 py-2 animate-fade-up">
-        <div className="max-w-[72%] bg-bg-user-msg border border-border text-text-primary
-                        text-sm leading-relaxed px-4 py-2.5 rounded-2xl rounded-br-sm">
+      <div className="flex justify-end items-end gap-2 px-4 py-2 animate-fade-up">
+        <div className="max-w-[72%] bg-bg-user-msg border border-white/10 text-text-primary
+                        text-sm leading-relaxed px-4 py-2.5 rounded-2xl rounded-br-md shadow-sm">
           <p className="whitespace-pre-wrap">{content}</p>
+        </div>
+        {/* User avatar */}
+        <div className="w-6 h-6 rounded-full bg-white/15 border border-white/20 flex items-center justify-center flex-shrink-0 mb-0.5">
+          <span className="text-[10px] font-semibold text-text-primary leading-none">U</span>
         </div>
       </div>
     );
@@ -187,8 +209,10 @@ export default function ChatMessage({
     >
       {/* Message content row */}
       <div className="flex items-start gap-3">
-        {/* ● dot */}
-        <div className="w-2 h-2 rounded-full bg-white/80 flex-shrink-0 mt-2" />
+        {/* L avatar */}
+        <div className="w-6 h-6 rounded-md bg-white flex items-center justify-center flex-shrink-0 mt-0.5">
+          <span className="text-black font-black text-[10px] leading-none">L</span>
+        </div>
 
         {/* Text area */}
         <div className="flex-1 min-w-0 prose-chat">
@@ -219,19 +243,28 @@ export default function ChatMessage({
 
       {/* Artifact preview card — shown inline in chat */}
       {artifact && !isStreaming && (
-        <div className="pl-5">
+        <div className="pl-9">
           <ArtifactCard artifact={artifact} onClick={() => onOpenArtifact?.(artifact)} />
         </div>
       )}
 
-      {/* Action bar (hover-revealed) */}
-      {!isStreaming && !isEmpty && (
-        <div className={`flex items-center flex-wrap gap-1 mt-2 pl-5 transition-all duration-150 ${hovered ? 'opacity-100' : 'opacity-0'}`}>
-          <CopyButton text={content} />
-          {skillUsed && <SkillBadge skill={skillUsed} />}
+      {/* Item 9: Skill badge — always-visible under message */}
+      {skillUsed && !isStreaming && !isEmpty && (
+        <div className="flex items-center gap-1.5 pl-9 mt-1.5">
+          <SkillBadge skill={skillUsed} />
           {confidence && skillUsed?.startsWith('research:') && (
             <ConfidenceBadge confidence={confidence} />
           )}
+        </div>
+      )}
+
+      {/* Action bar (hover-revealed): copy + retry + artifact link */}
+      {!isStreaming && !isEmpty && (
+        <div className={`flex items-center flex-wrap gap-0.5 mt-1 pl-9 transition-all duration-150 ${hovered ? 'opacity-100' : 'opacity-0'}`}>
+          {/* Item 7: copy */}
+          <CopyButton text={content} />
+          {/* Item 6: retry */}
+          {onRetry && <RetryButton onRetry={() => onRetry(msgId)} />}
           {artifact && (
             <button
               onClick={() => onOpenArtifact?.(artifact)}
@@ -250,14 +283,14 @@ export default function ChatMessage({
 
       {/* Sources */}
       {sources?.length > 0 && !isStreaming && (
-        <div className="pl-5 mt-1">
+        <div className="pl-9 mt-1">
           <SourcesAccordion sources={sources} />
         </div>
       )}
 
       {/* Research Stats + self-heal banner (Research Mode only) */}
       {researchStats && !isStreaming && (
-        <div className="pl-5 mt-0.5">
+        <div className="pl-9 mt-0.5">
           <ResearchStats stats={researchStats} healingAttempts={healingAttempts} />
         </div>
       )}

@@ -79,7 +79,7 @@ export default function ArtifactPane({ artifact, onClose }) {
         <Tabs.List className="flex border-b border-border px-3 flex-shrink-0 gap-0.5">
           {[
             { value: 'preview', icon: Eye,   label: 'Preview' },
-            { value: 'source',  icon: Code2, label: 'Source'  },
+            { value: 'source',  icon: Code2, label: 'Code'  },
           ].map(({ value, icon: Icon, label }) => (
             <Tabs.Trigger
               key={value}

@@ -14,7 +14,7 @@ import ProviderToggle   from './components/ProviderToggle';
 
 import {
   createSession, listSessions, getMessages,
-  streamChat, getLLMConfig, setLLMProvider, getHealth,
+  streamChat, streamResearchChat, getLLMConfig, setLLMProvider, getHealth,
   renameSession, deleteSession,
 } from './api';
 
@@ -95,10 +95,13 @@ export default function App() {
   const [streaming, setStreaming]             = useState(false);
   const [artifact, setArtifact]               = useState(null);
   const [agentStep, setAgentStep]             = useState('');
-  const [provider, setProvider]               = useState('ollama');
-  const [modelName, setModelName]             = useState('qwen3:4b');
-  const [healthy, setHealthy]                 = useState(true);
-  const [error, setError]                     = useState('');
+  const [provider,       setProvider]       = useState('ollama');
+  const [modelName,      setModelName]      = useState('qwen3:4b');
+  const [healthy,        setHealthy]        = useState(true);
+  const [error,          setError]          = useState('');
+  // Research Mode
+  const [researchMode,   setResearchMode]   = useState(false);
+  const [agentSteps,     setAgentSteps]     = useState([]);
 
   const bottomRef    = useRef(null);
   const abortRef     = useRef(null); // stores current SSE AbortController
@@ -206,38 +209,55 @@ export default function App() {
 
     setStreaming(true);
     setError('');
+    setAgentSteps([]);  // reset agent steps for new message
 
-    const ctrl = streamChat(sessionId, text, {
+    const streamFn = researchMode ? streamResearchChat : streamChat;
+
+    const ctrl = streamFn(sessionId, text, {
       onToken: (token) => {
         setMessages(prev => prev.map(m =>
           m.id === assistantId ? { ...m, content: m.content + token } : m
         ));
       },
-      onStep: (step) => {
-        setAgentStep(step);
+      onStep: (stepData) => {
+        // stepData is a string for classic mode, {agent,step} object for research mode
+        const stepLabel = typeof stepData === 'object' ? stepData.step : stepData;
+        const agentName = typeof stepData === 'object' ? stepData.agent : null;
+        setAgentStep(stepLabel);
+        if (agentName) {
+          setAgentSteps(prev => [...prev, { agent: agentName, step: stepLabel }]);
+        }
       },
       onDone: async (meta) => {
         setAgentStep('');
         // Finalize the streaming message with metadata
         setMessages(prev => prev.map(m =>
           m.id === assistantId
-            ? { ...m, _streaming: false, skillUsed: meta.skill_used, sources: meta.sources || [], artifact: meta.artifact || null }
+            ? {
+                ...m,
+                _streaming: false,
+                skillUsed: meta.skill_used,
+                sources: meta.sources || [],
+                artifact: meta.artifact || null,
+                // Research Mode extras
+                confidence: meta.confidence || null,
+                researchStats: meta.research_stats || null,
+                healingAttempts: meta.healing_attempts || 0,
+                agentSteps: meta.agent_steps || [],
+              }
             : m
         ));
         if (meta.artifact) setArtifact(meta.artifact);
 
-        // Update title — new_title is only set on the first message of a session
-        // Guard: only update if it's a non-empty string (LLM can return blank)
         if (meta.new_title && typeof meta.new_title === 'string' && meta.new_title.trim()) {
           setSessions(prev => prev.map(s =>
             s.id === sessionId ? { ...s, title: meta.new_title.trim() } : s
           ));
         }
-        // Note: no listSessions() call — sessions don't change on follow-up messages
-
         setStreaming(false);
       },
       onError: (err) => {
+        console.error('[App] Stream error:', err);
         setMessages(prev => prev.map(m =>
           m.id === assistantId
             ? { ...m, _streaming: false, content: `⚠️ ${err.message || 'Something went wrong.'}` }
@@ -249,7 +269,7 @@ export default function App() {
     });
 
     abortRef.current = ctrl;
-  }, [activeSessionId, provider]);
+  }, [activeSessionId, provider, researchMode]);
 
   // ── Switch provider ──
   const handleProviderChange = useCallback(async (newProvider) => {
@@ -313,6 +333,10 @@ export default function App() {
                 onOpenArtifact={setArtifact}
                 isStreaming={msg._streaming}
                 agentStep={msg._streaming ? agentStep : ''}
+                agentSteps={msg._streaming ? agentSteps : (msg.agentSteps || [])}
+                confidence={msg.confidence}
+                researchStats={msg.researchStats}
+                healingAttempts={msg.healingAttempts || 0}
               />
             ))}
 
@@ -323,7 +347,9 @@ export default function App() {
           <ChatInput
             onSend={handleSend}
             disabled={streaming}
-            placeholder="Ask anything about growth…"
+            placeholder={researchMode ? 'Ask anything — Research Mode active (5 agents)…' : 'Ask anything about growth…'}
+            researchMode={researchMode}
+            onResearchModeChange={setResearchMode}
           />
         </main>
 

@@ -3,7 +3,8 @@
  *
  * User:      right-aligned gray pill
  * Assistant: left-aligned, dot prefix, hover-copy, streaming cursor,
- *            thinking dots (before first token), artifact preview card
+ *            thinking dots (before first token), artifact preview card,
+ *            AgentTracker (Research Mode), ConfidenceBadge, ResearchStats
  */
 import { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
@@ -11,6 +12,9 @@ import remarkGfm from 'remark-gfm';
 import { Copy, Check, Layers, Code2, FileText, ExternalLink } from 'lucide-react';
 import SkillBadge from './SkillBadge';
 import SourcesAccordion from './SourcesAccordion';
+import AgentTracker from './AgentTracker';
+import ConfidenceBadge from './ConfidenceBadge';
+import ResearchStats from './ResearchStats';
 
 function CopyButton({ text }) {
   const [copied, setCopied] = useState(false);
@@ -134,7 +138,12 @@ function AgentStatus({ step }) {
   );
 }
 
-export default function ChatMessage({ role, content, skillUsed, sources, artifact, onOpenArtifact, isStreaming, agentStep }) {
+export default function ChatMessage({
+  role, content, skillUsed, sources, artifact, onOpenArtifact,
+  isStreaming, agentStep,
+  // Research Mode extras
+  agentSteps = [], confidence, researchStats, healingAttempts = 0,
+}) {
   const [hovered, setHovered] = useState(false);
   const isUser = role === 'user';
 
@@ -190,6 +199,10 @@ export default function ChatMessage({ role, content, skillUsed, sources, artifac
             )
             : (
               <>
+                {/* AgentTracker — shown above content in Research Mode */}
+                {isStreaming && agentSteps.length > 0 && (
+                  <AgentTracker steps={agentSteps} isActive={isStreaming} />
+                )}
                 {/* Once tokens arrive, compact step above content while streaming */}
                 {agentStep && isStreaming && (
                   <AgentStatus key={agentStep} step={agentStep} />
@@ -213,9 +226,12 @@ export default function ChatMessage({ role, content, skillUsed, sources, artifac
 
       {/* Action bar (hover-revealed) */}
       {!isStreaming && !isEmpty && (
-        <div className={`flex items-center gap-1 mt-2 pl-5 transition-all duration-150 ${hovered ? 'opacity-100' : 'opacity-0'}`}>
+        <div className={`flex items-center flex-wrap gap-1 mt-2 pl-5 transition-all duration-150 ${hovered ? 'opacity-100' : 'opacity-0'}`}>
           <CopyButton text={content} />
           {skillUsed && <SkillBadge skill={skillUsed} />}
+          {confidence && skillUsed?.startsWith('research:') && (
+            <ConfidenceBadge confidence={confidence} />
+          )}
           {artifact && (
             <button
               onClick={() => onOpenArtifact?.(artifact)}
@@ -236,6 +252,13 @@ export default function ChatMessage({ role, content, skillUsed, sources, artifac
       {sources?.length > 0 && !isStreaming && (
         <div className="pl-5 mt-1">
           <SourcesAccordion sources={sources} />
+        </div>
+      )}
+
+      {/* Research Stats + self-heal banner (Research Mode only) */}
+      {researchStats && !isStreaming && (
+        <div className="pl-5 mt-0.5">
+          <ResearchStats stats={researchStats} healingAttempts={healingAttempts} />
         </div>
       )}
     </div>

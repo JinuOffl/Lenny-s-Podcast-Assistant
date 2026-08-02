@@ -1,6 +1,7 @@
 /**
  * SkillBadge.jsx — Border-only pill, no filled color backgrounds.
  * Monochromatic style matching Nothing design philosophy.
+ * Handles research:* prefixed skills from Research Mode.
  */
 
 const SKILL_CONFIG = {
@@ -24,10 +25,27 @@ const SKILL_CONFIG = {
     label: 'Follow-up',
     color: '#9E9E9E',
   },
+  // Research Mode variants
+  'research:qa': {
+    label: '🔬 Research',
+    color: '#F97316',
+  },
+  'research:ship30for30': {
+    label: '🔬 Research Essay',
+    color: '#F97316',
+  },
+  'research:multi': {
+    label: '🔬 Research + Artifact',
+    color: '#F97316',
+  },
+  'research:followup': {
+    label: '🔬 Research Follow-up',
+    color: '#F97316',
+  },
 };
 
 export default function SkillBadge({ skill }) {
-  const cfg = SKILL_CONFIG[skill] || SKILL_CONFIG.qa;
+  const cfg = SKILL_CONFIG[skill] || SKILL_CONFIG[skill?.replace('research:', '')] || SKILL_CONFIG.qa;
   return (
     <span
       className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium tracking-wide border"

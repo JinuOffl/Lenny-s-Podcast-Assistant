@@ -4,6 +4,10 @@ main.py — FastAPI application entry point.
 Run with:
     cd backend
     uvicorn main:app --reload --port 8000
+
+Endpoints:
+  Classic mode: POST /sessions/{id}/chat/stream   (keyword router + skill pipeline)
+  Research mode: POST /sessions/{id}/chat/research/stream  (5-agent CrewAI pipeline)
 """
 from __future__ import annotations
 import json
@@ -29,6 +33,7 @@ from models import (
 from skills.qa import run_qa
 from skills.ship30for30 import run_ship30
 from skills.artifact import run_artifact
+from agents.crew_runner import run_research_pipeline
 
 # ── Lifespan ──────────────────────────────────────────────────────────────────
 
@@ -42,8 +47,9 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Lenny's Growth Assistant API",
-    version="0.2.0",
+    version="0.3.0",
     lifespan=lifespan,
+    description="Classic mode + Research Mode (5-agent CrewAI pipeline)",
 )
 
 app.add_middleware(
@@ -541,3 +547,127 @@ async def chat_stream(session_id: UUID, body: ChatRequest):
 
     return StreamingResponse(generate(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+# ── Research Mode (5-agent pipeline) ─────────────────────────────────────────
+
+@app.post("/sessions/{session_id}/chat/research/stream", tags=["chat"])
+async def chat_research_stream(session_id: UUID, body: ChatRequest):
+    """
+    Research Mode — 5-agent CrewAI pipeline with SSE streaming.
+
+    Agents (in execution order):
+      1. OrchestratorAgent  — plans the crew based on query + history
+      2. ResearchAgent      — multi-hop RAG retrieval (1-2 search hops)
+      3. WriterAgent        — streams QA answer or Ship30for30 essay ← parallel with 4
+      4. ArtifactAgent      — builds HTML dashboard (if requested)   ← parallel with 3
+      5. ValidatorAgent     — QC + self-healing for broken artifacts
+
+    Events emitted:
+      data: {"agent": "...", "step": "..."}   ← agent status
+      data: {"token": "..."}                  ← streaming text
+      data: {"done": true, "skill_used": ..., "sources": [...],
+             "artifact": ..., "confidence": "high|medium|low",
+             "healing_attempts": 0, "agent_steps": [...],
+             "research_stats": {"chunks_found": N, "episodes": N, ...}}
+    """
+    # 1. Verify session
+    async with get_conn() as conn:
+        cur = await conn.execute(
+            "SELECT * FROM sessions WHERE id = %s", (session_id,)
+        )
+        session = await cur.fetchone()
+        if not session:
+            raise HTTPException(404, "Session not found")
+
+        history = await _get_history(conn, session_id, limit=10)
+
+        # Persist user message
+        await conn.execute(
+            "INSERT INTO messages (session_id, role, content) VALUES (%s, 'user', %s)",
+            (session_id, body.message),
+        )
+
+    provider = get_llm_provider(_current_provider)
+    is_first_message = len(history) == 0
+
+    async def generate():
+        full_response = []
+        sources = []
+        artifact = None
+        skill_used = "qa"
+        confidence = "high"
+        healing_attempts = 0
+        agent_steps = []
+        smart_title = None
+
+        try:
+            async with get_conn() as conn:
+                async for sse_chunk in run_research_pipeline(
+                    session_id=str(session_id),
+                    user_query=body.message,
+                    provider=provider,
+                    conn=conn,
+                    history=history,
+                ):
+                    yield sse_chunk
+
+                    # Parse events to capture metadata for DB persistence
+                    try:
+                        raw = sse_chunk.replace("data: ", "").strip()
+                        if not raw:
+                            continue
+                        event = json.loads(raw)
+
+                        if event.get("token"):
+                            full_response.append(event["token"])
+                        elif event.get("done"):
+                            sources = event.get("sources", [])
+                            artifact = event.get("artifact")
+                            skill_used = event.get("skill_used", "qa")
+                            confidence = event.get("confidence", "high")
+                            healing_attempts = event.get("healing_attempts", 0)
+                            agent_steps = event.get("agent_steps", [])
+                    except (json.JSONDecodeError, KeyError):
+                        pass
+
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            return
+
+        # Persist assistant message with research metadata
+        complete_text = "".join(full_response)
+        async with get_conn() as conn:
+            await conn.execute(
+                """INSERT INTO messages
+                   (session_id, role, content, skill_used, artifact_json, sources)
+                   VALUES (%s, 'assistant', %s, %s, %s, %s)""",
+                (
+                    session_id,
+                    complete_text,
+                    f"research:{skill_used}",
+                    json.dumps(artifact) if artifact else None,
+                    json.dumps(sources) if sources else None,
+                ),
+            )
+
+        # Generate smart title on first message
+        if is_first_message:
+            smart_title = await _generate_title(provider, body.message)
+            if not smart_title or not smart_title.strip():
+                smart_title = body.message.strip()[:60] or "New conversation"
+            async with get_conn() as conn2:
+                await conn2.execute(
+                    "UPDATE sessions SET title = %s WHERE id = %s",
+                    (smart_title, session_id),
+                )
+            print(f"[research] title: {smart_title!r}")
+
+        # Final done event with Research Mode metadata
+        yield f"data: {json.dumps({'done': True, 'skill_used': f'research:{skill_used}', 'sources': sources, 'artifact': artifact, 'new_title': smart_title, 'confidence': confidence, 'healing_attempts': healing_attempts, 'agent_steps': agent_steps})}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )

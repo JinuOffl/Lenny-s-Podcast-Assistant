@@ -1,6 +1,6 @@
 # Architecture: Lenny's Growth Assistant
 
-**Version:** 0.3 — Agentic Router + Streaming + Multi-skill Chaining
+**Version:** 0.4 — Dual-Mode: Classic (Agentic Router) + Research Mode (5-Agent CrewAI Pipeline)
 
 ---
 
@@ -134,3 +134,122 @@ See `backend/db.py` for full DDL. Three tables:
 | Vector index | IVFFlat (lists=100) | HNSW for better recall at larger scale |
 | Concurrent users | Single-process Uvicorn | Gunicorn workers + connection pool tuning |
 | Provider | Ollama \| Anthropic | Add `GeminiProvider`, etc. — implement LLMProvider ABC |
+
+---
+
+## Research Mode — 5-Agent Multi-Agent Pipeline
+
+**Version 0.4** adds a second execution mode accessible via the "Research" toggle near the chat input.
+It runs a 5-agent pipeline that goes beyond the Classic mode's keyword router.
+
+### Agent Roster
+
+| Agent | Role | Runs When | Key Capability |
+|---|---|---|---|
+| **OrchestratorAgent** | Research Planner | Always, first | LLM-powered plan: decides crew type, refines search queries |
+| **ResearchAgent** | Transcript Researcher | Always (except followup) | Multi-hop RAG: 1-2 search passes, cross-episode synthesis |
+| **WriterAgent** | Content Generator | Always | Streams QA answers or Ship30for30 essays with guest comparisons |
+| **ArtifactAgent** | Dashboard Builder | If artifact requested | Generates interactive HTML dashboards with Chart.js/Plotly |
+| **ValidatorAgent** | QC + Self-Healer | Last, always | HTML validation + self-healing loop (max 2 attempts) |
+
+### Execution Flow
+
+```
+Phase 1 ─► OrchestratorAgent (2-3s)
+            LLM call → JSON plan: crew type, refined query, complexity
+
+Phase 2 ─► ResearchAgent (5-8s)
+            execute_search() → assess_quality() → multi-hop if thin
+            Fills SharedContext: chunks, sources, context_text
+
+Phase 3 ─► WriterAgent ──────┐  asyncio.gather() — PARALLEL
+            (streams tokens) │
+            ArtifactAgent ───┘  (background — builds HTML silently)
+
+Phase 4 ─► ValidatorAgent (2-3s)
+            validate_html() → self-heal loop if broken → confidence score
+```
+
+### Parallelism Design
+
+WriterAgent and ArtifactAgent both need the same research output (Phase 2 result).
+Once Phase 2 completes, they run concurrently using `asyncio.gather()`:
+- WriterAgent streams tokens immediately → user sees text at ~8s
+- ArtifactAgent builds silently in background → appears when writer finishes
+
+### New SSE Event Types (Research Mode)
+
+```json
+{"agent": "ResearchAgent", "step": "🔍 Searching transcripts...", "sources_found": 6}
+{"agent": "ValidatorAgent", "step": "🔧 Self-healing artifact (attempt 1/2) — Unclosed script tag"}
+{"token": "When Brian Chesky told Lenny..."}
+{"done": true, "skill_used": "research:ship30for30", "confidence": "high",
+ "healing_attempts": 1, "agent_steps": [...], "research_stats": {...}}
+```
+
+### SharedContext — Agent Working Memory
+
+```python
+@dataclass
+class SharedContext:
+    user_query: str          # Original user message
+    history: list            # Conversation history
+    plan: ExecutionPlan      # OrchestratorAgent's plan
+    chunks: list             # Raw transcript chunks from ResearchAgent
+    sources: list            # Deduped episode sources
+    context_text: str        # Formatted context for LLM prompts
+    primary_response: str    # WriterAgent's output (accumulated from stream)
+    artifact: dict | None    # ArtifactAgent's HTML/MD output
+    confidence: str          # "high" | "medium" | "low" (based on source count)
+    heal_attempts: int       # How many self-healing attempts ran
+    agent_steps: list        # Full trace of all agent actions
+```
+
+### Self-Healing Architecture
+
+```
+ArtifactAgent generates HTML
+         │
+ValidatorAgent.validate_html(content)
+         │
+    Error?  ──── No ──► ✅ Done
+         │
+        Yes
+         │
+         ▼
+Emit SSE: {"step": "🔧 Self-healing — [error description]"}
+         │
+ArtifactAgent re-runs with error injected into prompt
+         │
+ValidatorAgent.validate_html(new_content)
+         │
+    Error?  ──── No ──► ✅ Healed! Emit success event
+         │
+    Attempt 2 → on failure → graceful degradation
+```
+
+### Endpoint
+
+```
+POST /sessions/{session_id}/chat/research/stream
+```
+
+Classic endpoint (`/chat/stream`) is **unchanged** — Research Mode is purely additive.
+
+### New File Structure
+
+```
+backend/
+├── agents/
+│   ├── shared_context.py   ← SharedContext + ExecutionPlan dataclasses
+│   ├── orchestrator.py     ← OrchestratorAgent (LLM JSON planner)
+│   ├── research.py         ← ResearchAgent (multi-hop RAG)
+│   ├── writer.py           ← WriterAgent (streaming QA + essay)
+│   ├── artifact_agent.py   ← ArtifactAgent (HTML generation + self-heal)
+│   ├── validator.py        ← ValidatorAgent (QC + self-healing loop)
+│   └── crew_runner.py      ← Pipeline orchestrator (parallel execution)
+└── tools/
+    ├── search_tool.py      ← execute_search(), execute_multi_hop_search()
+    ├── validate_tool.py    ← validate_html(), validate_essay()
+    └── count_tool.py       ← word/citation counting utilities
+```

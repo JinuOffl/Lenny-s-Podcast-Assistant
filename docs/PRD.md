@@ -1,9 +1,9 @@
 # PRD: Lenny's Growth Assistant
 
-**Version:** 1.0 — MVP complete  
-**Status:** Submitted  
+**Version:** 2.0 — Research Mode shipped  
+**Status:** In Progress (Phase 3 — Polish + Submission)  
 **Author:** Jinu  
-**Date:** 2026-08-03
+**Date:** 2026-08-02
 
 ---
 
@@ -35,19 +35,22 @@ A PM, growth lead, or early-stage founder who:
 - [x] Split-pane UI: sidebar (session list) + chat pane + artifact pane
 - [x] `/health` endpoint checking DB + LLM reachability
 - [x] Public GitHub repo
-- [x] `agent-transcripts/` folder with real failures and lessons
 - [x] `docs/` — PRD.md, design.md, architecture.md
-- [x] README with local setup instructions (evaluator runs with their own keys)
-- [x] Demo video
+- [x] README with local setup instructions
+- [x] **Research Mode** — 5-agent pipeline (Orchestrator → Research → Writer + Artifact → Validator)
+- [x] **Self-healing artifacts** — ValidatorAgent retries up to 2× with error context injected
+- [x] **AgentTracker UI** — live pipeline viz in chat (pending/active/done/healing)
+- [x] **ResearchModeToggle** — GPT-style pill near chat input
+- [x] **ConfidenceBadge** — source-count-based confidence scoring
+- [x] **Streaming** — SSE token-by-token with parallel artifact generation
 
-### Out of Scope (P1 — if time allows)
-- [ ] Citation cards with YouTube deep-links
-- [ ] Dropdown to switch between multiple local models
-- [ ] Per-session loading / empty states
-- [ ] Basic automated tests
+### Still Needed (P1 — Phase 3)
+- [ ] `agent-transcripts/` folder — raw failure/correction logs (rubric mandatory)
+- [ ] Video demo recording (2-3 min, camera on, by Aug 2)
+- [ ] Remove debug console.logs before final submission
+- [ ] README update — add Research Mode setup + endpoint docs
 
 ### Explicitly Cut (P2 — cut without guilt)
-- Streaming responses (conflicts with artifact tag parsing; not in rubric)
 - Authentication / multi-user
 - Full 269-episode ingestion (config change, not architecture change)
 - Any cloud deployment (evaluator runs locally with their own keys)
@@ -86,9 +89,13 @@ A PM, growth lead, or early-stage founder who:
 | Decision | Choice | Rationale |
 |---|---|---|
 | Database | Supabase Postgres + pgvector | Satisfies mandatory requirement; vector search in same DB |
-| Embeddings | `nomic-embed-text` via Ollama | 8k context window (vs MiniLM's 256 tokens); zero new deps |
-| Local LLM | `llama3.2` / any Ollama model (configurable via `.env`) | Evaluator substitutes their own model; app is model-agnostic |
-| Cloud LLM | Anthropic `claude-sonnet-5` (optional) | Requires evaluator's own API key; app falls back to Ollama if key absent |
-| Router | Rule-based keyword classifier | Deterministic, zero latency, trivially explainable |
-| Streaming | Disabled for MVP | Conflicts with `<artifact>` tag extraction from full response |
-| Agent framework | None — 50-line router | Easier to explain; no dependency risk under time pressure |
+| Embeddings | `nomic-embed-text` via Ollama | 8k context window; zero new deps |
+| Local LLM | `qwen3:4b` / any Ollama model (via `.env`) | Model-agnostic; evaluator substitutes their own |
+| Cloud LLM | Anthropic `claude-sonnet-5` (optional) | Evaluator's own API key; falls back to Ollama if absent |
+| Classic Router | Rule-based keyword classifier | Deterministic, zero latency, explainable |
+| Research Router | OrchestratorAgent (LLM JSON plan + keyword fallback) | Adaptive; graceful fallback if LLM returns invalid JSON |
+| Streaming | SSE token-by-token (WriterAgent) | Perceived latency ↓; user sees content at ~8s not ~60s |
+| Agent framework | Pure Python async (CrewAI conceptual model) | Avoids Ollama/OpenAI tool-calling incompatibility |
+| Parallelism | asyncio.gather() for Writer + Artifact | ~30% latency reduction on essay+dashboard queries |
+| Self-healing | ValidatorAgent loop (max 2 retries) | Broken HTML fixed automatically; "⚡ Self-healed" UI banner |
+| Tools | Pure Python functions, not LLM function-calling | Sidesteps Ollama tool-calling protocol issues entirely |

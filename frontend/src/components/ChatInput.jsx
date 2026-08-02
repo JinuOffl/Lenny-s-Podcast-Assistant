@@ -1,11 +1,13 @@
 /**
  * ChatInput.jsx — Auto-resize composer, ChatGPT-style.
- * Centered max-width 760px, white send button, no orange.
+ * Centered max-width 760px, Research Mode toggle left of send button.
  */
 import { useState, useRef, useEffect } from 'react';
 import { ArrowUp } from 'lucide-react';
+import ResearchModeToggle from './ResearchModeToggle';
 
-export default function ChatInput({ onSend, disabled, placeholder }) {
+export default function ChatInput({ onSend, disabled, placeholder, researchMode, onResearchModeChange }) {
+
   const [value, setValue] = useState('');
   const textareaRef = useRef(null);
 
@@ -57,6 +59,12 @@ export default function ChatInput({ onSend, disabled, placeholder }) {
             className="flex-1 resize-none bg-transparent text-sm text-text-primary
                        placeholder:text-text-muted outline-none leading-relaxed
                        min-h-[22px] max-h-40 disabled:cursor-not-allowed py-0.5"
+          />
+          {/* Research Mode toggle */}
+          <ResearchModeToggle
+            researchMode={researchMode}
+            onChange={onResearchModeChange}
+            disabled={disabled}
           />
           <button
             id="chat-send-btn"
